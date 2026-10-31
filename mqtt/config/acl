@@ -1,0 +1,12 @@
+# ---- platform / server account: everything under richsmart/# ----
+user platform
+topic readwrite richsmart/#
+topic read $SYS/#
+
+# ---- device accounts: only richsmart/dev/<设备编号>/# ----
+user dev-035743
+topic readwrite richsmart/dev/035743/#
+
+# ---- generic factory bench-test account: only its own test device id ----
+user factory-test
+topic readwrite richsmart/dev/factory-test/#

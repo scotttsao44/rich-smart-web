@@ -1,0 +1,21 @@
+.git
+.next
+.next-*
+.next-dev
+.playwright-cli
+node_modules
+output
+out
+.data
+private
+tmp
+deployment-packages
+backups
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+Dockerfile
+README_DEPLOY_STAGING.md
+* 2

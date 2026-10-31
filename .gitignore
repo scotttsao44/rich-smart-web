@@ -1,0 +1,44 @@
+# deps / build
+node_modules/
+.next/
+.next-*/
+.next-dev/
+out/
+output/
+*.tsbuildinfo
+# env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*credentials*
+*secret*
+passwd
+*.passwd
+certs/
+mqtt/config/passwd
+# runtime data
+data/
+.data/
+uploads/
+backups/
+deployment-packages/
+private/
+tmp/
+log/
+*.log
+*.db
+*.sqlite*
+*.bak
+*.tgz
+*.tar
+*.tar.gz
+seed-data/*
+!seed-data/cn-brand-marketplace.empty.json
+# misc
+.DS_Store
+.playwright-cli/

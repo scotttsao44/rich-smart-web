@@ -1,0 +1,184 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --caomi-forest-950: #10271d;
+    --caomi-forest-900: #173b2a;
+    --caomi-forest-800: #214b36;
+    --caomi-forest-700: #2e5d43;
+    --caomi-leaf-700: #66863e;
+    --caomi-leaf-600: #78984b;
+    --caomi-leaf-100: #e7eddc;
+    --caomi-leaf-50: #f2f5ec;
+    --caomi-gold-800: #8a6028;
+    --caomi-gold-700: #a27635;
+    --caomi-gold-600: #bc9457;
+    --caomi-gold-200: #e5d2ac;
+    --caomi-gold-100: #f2e6ce;
+    --caomi-gold-50: #fbf7ee;
+    --caomi-page: #f3f5f1;
+  }
+
+  body {
+    font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-amber-600 text-white px-6 py-2 rounded-lg hover:bg-amber-700 transition-colors font-medium;
+  }
+  .btn-secondary {
+    @apply bg-gray-200 text-gray-800 px-6 py-2 rounded-lg hover:bg-gray-300 transition-colors font-medium;
+  }
+  .btn-danger {
+    @apply bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition-colors font-medium;
+  }
+  .btn-outline {
+    @apply border border-gray-300 text-gray-700 px-6 py-2 rounded-lg hover:bg-gray-50 transition-colors font-medium;
+  }
+  .card {
+    @apply bg-white rounded-xl shadow-sm p-6 border border-gray-100;
+  }
+  .input-field {
+    @apply w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent;
+  }
+  .label {
+    @apply block text-sm font-medium text-gray-700 mb-1;
+  }
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  .badge-amber {
+    @apply badge bg-amber-100 text-amber-800;
+  }
+  .badge-green {
+    @apply badge bg-green-100 text-green-800;
+  }
+  .badge-red {
+    @apply badge bg-red-100 text-red-800;
+  }
+  .badge-gray {
+    @apply badge bg-gray-100 text-gray-800;
+  }
+}
+
+@layer utilities {
+  .caomi-theme {
+    min-height: 100vh;
+    background: var(--caomi-page);
+    color: #1d2721;
+  }
+
+  .caomi-theme ::selection {
+    background: var(--caomi-gold-200);
+    color: var(--caomi-forest-950);
+  }
+
+  .caomi-theme .bg-teal-50,
+  .caomi-theme .bg-emerald-50 {
+    background-color: var(--caomi-leaf-50);
+  }
+
+  .caomi-theme .bg-teal-600,
+  .caomi-theme .bg-emerald-700 {
+    background-color: var(--caomi-leaf-700);
+  }
+
+  .caomi-theme .bg-teal-700,
+  .caomi-theme .bg-teal-800,
+  .caomi-theme .bg-teal-900,
+  .caomi-theme .bg-stone-950,
+  .caomi-theme .bg-gray-950,
+  .caomi-theme .bg-slate-950 {
+    background-color: var(--caomi-forest-900);
+  }
+
+  .caomi-theme .text-teal-600,
+  .caomi-theme .text-teal-700,
+  .caomi-theme .text-teal-800,
+  .caomi-theme .text-teal-900,
+  .caomi-theme .text-teal-950 {
+    color: var(--caomi-forest-700);
+  }
+
+  .caomi-theme .text-emerald-700,
+  .caomi-theme .text-emerald-800,
+  .caomi-theme .text-emerald-900 {
+    color: var(--caomi-leaf-700);
+  }
+
+  .caomi-theme .border-teal-100,
+  .caomi-theme .border-teal-200,
+  .caomi-theme .border-teal-300 {
+    border-color: #cbd8c2;
+  }
+
+  .caomi-theme .border-teal-500,
+  .caomi-theme .border-teal-600,
+  .caomi-theme .ring-teal-500 {
+    border-color: var(--caomi-leaf-700);
+    --tw-ring-color: var(--caomi-leaf-700);
+  }
+
+  .caomi-theme .border-emerald-100,
+  .caomi-theme .border-emerald-200 {
+    border-color: #d4dfc9;
+  }
+
+  .caomi-theme .bg-amber-50 {
+    background-color: var(--caomi-gold-50);
+  }
+
+  .caomi-theme .bg-amber-100 {
+    background-color: var(--caomi-gold-100);
+  }
+
+  .caomi-theme .bg-amber-500,
+  .caomi-theme .bg-amber-600,
+  .caomi-theme .bg-amber-700 {
+    background-color: var(--caomi-gold-700);
+  }
+
+  .caomi-theme .text-amber-600,
+  .caomi-theme .text-amber-700,
+  .caomi-theme .text-amber-800,
+  .caomi-theme .text-amber-900,
+  .caomi-theme .text-amber-950 {
+    color: var(--caomi-gold-800);
+  }
+
+  .caomi-theme .border-amber-100,
+  .caomi-theme .border-amber-200,
+  .caomi-theme .border-amber-300,
+  .caomi-theme .border-amber-500 {
+    border-color: var(--caomi-gold-200);
+  }
+
+  .caomi-theme .hover\:bg-teal-50:hover {
+    background-color: var(--caomi-leaf-50);
+  }
+
+  .caomi-theme .hover\:bg-teal-700:hover,
+  .caomi-theme .hover\:bg-stone-800:hover {
+    background-color: var(--caomi-forest-700);
+  }
+
+  .caomi-theme .hover\:border-teal-500:hover,
+  .caomi-theme .focus\:border-teal-600:focus {
+    border-color: var(--caomi-leaf-700);
+  }
+
+  .caomi-theme [class~="bg-[#f5f2ea]"],
+  .caomi-theme [class~="bg-[#f7f4ec]"],
+  .caomi-theme [class~="bg-[#f7f3ea]"],
+  .caomi-theme [class~="bg-[#f6f3ec]"],
+  .caomi-theme [class~="bg-[#f6f7f5]"],
+  .caomi-theme [class~="bg-[#fbfaf6]"],
+  .caomi-theme [class~="bg-[#fffaf0]"],
+  .caomi-theme [class~="bg-[#f5f7f4]"] {
+    background-color: var(--caomi-page);
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "rich-smart-crm",
+  "version": "1.6.2",
+  "private": true,
+  "description": "富智慧 CRM SaaS 平台 — 兩岸三地會員管理、佣金計算、商城系統",
+  "scripts": {
+    "dev": "NEXT_DIST_DIR=.next-dev next dev",
+    "build": "next build",
+    "postbuild": "mkdir -p .next/standalone/.next && cp -R .next/static .next/standalone/.next/static && cp -R public .next/standalone/public",
+    "start": "node .next/standalone/server.js",
+    "start:next": "next start",
+    "check:customer-copy": "node scripts/check-miniprogram-customer-copy.mjs",
+    "test:cn-routing": "node scripts/test-cn-routing-regression.mjs",
+    "lint": "next lint",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.9.0",
+    "@province-city-china/data": "8.5.8",
+    "@types/pg": "^8.11.6",
+    "@zxing/browser": "^0.2.1",
+    "autoprefixer": "^10.4.0",
+    "clsx": "^2.1.0",
+    "drizzle-orm": "^0.30.0",
+    "lucide-react": "^0.400.0",
+    "next": "^14.2.0",
+    "nodemailer": "^10.1.2",
+    "pg": "^8.23.1",
+    "postcss": "^8.4.0",
+    "qrcode": "^1.5.4",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "tailwind-merge": "^2.3.0",
+    "tailwindcss": "^3.4.0",
+    "unpdf": "1.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/nodemailer": "^8.0.2",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "drizzle-kit": "^0.21.0",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "^14.2.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,104 @@
+import { pgTable, serial, varchar, text, numeric, boolean, timestamp, integer } from 'drizzle-orm/pg-core';
+
+export const users = pgTable('users', {
+  id: serial('id').primaryKey(),
+  lineUserId: varchar('line_user_id', { length: 255 }),
+  wechatOpenid: varchar('wechat_openid', { length: 255 }),
+  phone: varchar('phone', { length: 50 }),
+  name: varchar('name', { length: 255 }),
+  email: varchar('email', { length: 255 }),
+  passwordHash: varchar('password_hash', { length: 255 }),
+  agentLevel: integer('agent_level').default(0),
+  totalSalesVolume: numeric('total_sales_volume').default('0'),
+  commissionBalance: numeric('commission_balance').default('0'),
+  referrerId: integer('referrer_id'),
+  region: varchar('region', { length: 10 }).default('TW'),
+  isActive: boolean('is_active').default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+});
+
+export const products = pgTable('products', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  imageUrl: varchar('image_url', { length: 500 }),
+  priceTwd: numeric('price_twd'),
+  priceCny: numeric('price_cny'),
+  costTwd: numeric('cost_twd'),
+  costCny: numeric('cost_cny'),
+  stockQuantity: integer('stock_quantity').default(0),
+  isActive: boolean('is_active').default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+});
+
+export const orders = pgTable('orders', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull(),
+  totalAmount: numeric('total_amount').notNull(),
+  currency: varchar('currency', { length: 10 }).default('TWD'),
+  status: varchar('status', { length: 50 }).default('pending'),
+  commissionProcessed: boolean('commission_processed').default(false),
+  // 物流資訊
+  shippingAddress: text('shipping_address'),
+  shippingName: varchar('shipping_name', { length: 255 }),
+  shippingPhone: varchar('shipping_phone', { length: 50 }),
+  trackingNumber: varchar('tracking_number', { length: 100 }),
+  shippingCompany: varchar('shipping_company', { length: 100 }),
+  shippedAt: timestamp('shipped_at', { withTimezone: true }),
+  deliveredAt: timestamp('delivered_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+});
+
+export const orderItems = pgTable('order_items', {
+  id: serial('id').primaryKey(),
+  orderId: integer('order_id').notNull(),
+  productId: integer('product_id').notNull(),
+  productName: varchar('product_name', { length: 255 }),
+  quantity: integer('quantity').default(1),
+  unitPrice: numeric('unit_price').notNull(),
+  costPrice: numeric('cost_price'),
+  currency: varchar('currency', { length: 10 }).default('TWD'),
+});
+
+export const commissions = pgTable('commissions', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull(),
+  orderId: integer('order_id'),
+  amount: numeric('amount').notNull(),
+  commissionType: varchar('commission_type', { length: 50 }).notNull(),
+  level: integer('level').default(1),
+  description: text('description'),
+  status: varchar('status', { length: 50 }).default('pending'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+});
+
+export const supportTickets = pgTable('support_tickets', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id'),
+  name: varchar('name', { length: 255 }),
+  email: varchar('email', { length: 255 }),
+  phone: varchar('phone', { length: 50 }),
+  type: varchar('type', { length: 50 }).notNull(), // inquiry, complaint, refund, other
+  subject: varchar('subject', { length: 255 }).notNull(),
+  message: text('message').notNull(),
+  orderId: integer('order_id'),
+  status: varchar('status', { length: 50 }).default('open'), // open, processing, resolved, closed
+  adminReply: text('admin_reply'),
+  repliedAt: timestamp('replied_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+});
+
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
+export type Product = typeof products.$inferSelect;
+export type NewProduct = typeof products.$inferInsert;
+export type Order = typeof orders.$inferSelect;
+export type NewOrder = typeof orders.$inferInsert;
+export type OrderItem = typeof orderItems.$inferSelect;
+export type NewOrderItem = typeof orderItems.$inferInsert;
+export type Commission = typeof commissions.$inferSelect;
+export type NewCommission = typeof commissions.$inferInsert;
+export type SupportTicket = typeof supportTickets.$inferSelect;
+export type NewSupportTicket = typeof supportTickets.$inferInsert;

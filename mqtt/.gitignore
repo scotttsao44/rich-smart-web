@@ -1,0 +1,17 @@
+# Secrets
+config/passwd
+passwd
+*.passwd
+certs/
+*.pem
+*.key
+*.crt
+.env
+.env.*
+# Runtime
+data/
+log/
+*.log
+*.db
+*.bak
+*.tgz

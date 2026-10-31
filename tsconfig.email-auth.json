@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "incremental": false },
+  "include": [
+    "next-env.d.ts",
+    "app/api/auth/email/**/*.ts",
+    "app/api/auth/login/route.ts",
+    "app/cn/email/page.tsx",
+    "app/cn/login/page.tsx",
+    "lib/email-auth/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}
