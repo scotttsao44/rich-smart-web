@@ -188,6 +188,51 @@ export async function createWechatMiniProgramPayment(input: {
   return { timeStamp, nonceStr, package: packageValue, signType: 'RSA' as const, paySign };
 }
 
+/** 公众号 JSAPI 交易单号：与 Native 区分，避免同一 out_trade_no 换渠道时被微信判定参数不一致。 */
+export function wechatJsapiTradeNo(orderNo: string) {
+  return `${orderNo}J`.slice(0, 32);
+}
+
+/** 由微信 out_trade_no 还原本地订单号（JSAPI 尾缀 J）。 */
+export function baseOrderNoFromTradeNo(tradeNo: string) {
+  const value = String(tradeNo || '');
+  return /^CN\d+J$/.test(value) ? value.slice(0, -1) : value;
+}
+
+export function wechatOfficialAppId() {
+  return envText('WECHAT_OFFICIAL_APP_ID');
+}
+
+/** 公众号 JSAPI 支付（微信内置浏览器）：appid = 公众号，payer.openid = 公众号 openid。 */
+export async function createWechatOfficialJsapiPayment(input: {
+  orderNo: string;
+  description: string;
+  amountFen: number;
+  openId: string;
+  attach?: string;
+}) {
+  const config = wechatPayConfig();
+  const appId = wechatOfficialAppId();
+  if (!appId) throw new Error('未配置公众号 AppID，无法调起公众号支付');
+  const outTradeNo = wechatJsapiTradeNo(input.orderNo);
+  const result = await callWechatPay<{ prepay_id: string }>('POST', '/v3/pay/transactions/jsapi', {
+    appid: appId,
+    mchid: config.mchId,
+    description: input.description.slice(0, 127),
+    out_trade_no: outTradeNo,
+    notify_url: config.notifyUrl,
+    attach: String(input.attach || '').slice(0, 128),
+    amount: { total: input.amountFen, currency: 'CNY' },
+    payer: { openid: input.openId },
+  });
+  if (!result.prepay_id) throw new Error('微信支付未返回 prepay_id');
+  const timeStamp = Math.floor(Date.now() / 1000).toString();
+  const nonceStr = nonce();
+  const packageValue = `prepay_id=${result.prepay_id}`;
+  const paySign = rsaSign(`${appId}\n${timeStamp}\n${nonceStr}\n${packageValue}\n`, config.merchantPrivateKey);
+  return { appId, timeStamp, nonceStr, package: packageValue, signType: 'RSA' as const, paySign, outTradeNo, prepayId: result.prepay_id };
+}
+
 /** Native 支付 (扫码)：返回 code_url，用于 Web / H5 生成二维码。appid 可用 WECHAT_PAY_NATIVE_APP_ID 覆盖，默认使用小程序 appid。 */
 export function wechatNativeAppIds() {
   const ids = [envText('WECHAT_PAY_NATIVE_APP_ID'), wechatPayConfig().appId, envText('WECHAT_OFFICIAL_APP_ID')].filter(Boolean);
@@ -316,7 +361,7 @@ export function decryptWechatRefundNotification(resource: {
 export function validateWechatTransaction(transaction: WechatPayTransaction, expected: { orderNo: string; amountFen: number }) {
   const config = wechatPayConfig();
   if (!wechatNativeAppIds().includes(transaction.appid) || transaction.mchid !== config.mchId) throw new Error('微信支付回调商户身份不符');
-  if (transaction.out_trade_no !== expected.orderNo) throw new Error('微信支付订单号不符');
+  if (baseOrderNoFromTradeNo(transaction.out_trade_no) !== expected.orderNo) throw new Error('微信支付订单号不符');
   if (transaction.amount?.currency !== 'CNY' || Number(transaction.amount?.total) !== expected.amountFen) throw new Error('微信支付金额不符');
   if (transaction.trade_state !== 'SUCCESS') throw new Error(transaction.trade_state_desc || '微信支付尚未成功');
   if (!transaction.transaction_id) throw new Error('微信支付交易号缺失');

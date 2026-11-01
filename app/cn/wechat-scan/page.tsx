@@ -42,6 +42,14 @@ function WechatScanConfirmInner() {
           return;
         }
         setOfficialConfigured(Boolean(data.officialConfigured));
+        if (data.officialConfigured && /micromessenger/i.test(navigator.userAgent || '')) {
+          const qs = new URLSearchParams();
+          qs.set('returnTo', `/cn/member?sid=${encodeURIComponent(sid)}`);
+          const ref = String(data.referrerCode || refFromUrl || '').trim();
+          if (ref) qs.set('ref', ref);
+          window.location.replace(`/api/auth/wechat/official/start?${qs.toString()}`);
+          return;
+        }
         if (data.referrerName) setReferrerName(data.referrerName);
         if (data.referrerCode) setReferrerCode(data.referrerCode);
       })
@@ -57,12 +65,18 @@ function WechatScanConfirmInner() {
     const isWeChatBrowser =
       typeof navigator !== 'undefined' && /micromessenger/i.test(navigator.userAgent || '');
 
-    if (isWeChatBrowser && officialConfigured) {
+    if (isWeChatBrowser) {
+      // 真实公众号 OAuth：sid 放在 returnTo 内，回调据此确认电脑端扫码会话
       const qs = new URLSearchParams();
-      qs.set('returnTo', '/cn/member');
+      qs.set('returnTo', sid ? `/cn/member?sid=${encodeURIComponent(sid)}` : '/cn/member');
       if (referrerCode) qs.set('ref', referrerCode);
-      if (sid) qs.set('sid', sid);
       window.location.href = `/api/auth/wechat/official/start?${qs.toString()}`;
+      return;
+    }
+
+    if (sid) {
+      setStatus('error');
+      setErrorMessage('请使用微信「扫一扫」扫描电脑上的二维码，并在微信内完成授权');
       return;
     }
 
@@ -106,7 +120,7 @@ function WechatScanConfirmInner() {
           <p className="text-xs font-semibold tracking-widest text-emerald-100 uppercase">
             微信安全扫码授权
           </p>
-          <h1 className="mt-1 text-xl font-bold">草木初心 · 中国区会员中心</h1>
+          <h1 className="mt-1 text-xl font-bold">糙米健康 · 中国区会员中心</h1>
           <p className="mt-1.5 text-xs text-emerald-50/90">
             点击下方「允许登录」完成授权，电脑端将自动同步跳转
           </p>

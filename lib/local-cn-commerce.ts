@@ -21,7 +21,7 @@ import {
 } from './local-cn-users';
 import { getPublicBrandProduct } from './local-cn-brand-marketplace';
 import { getCnPaymentSettings } from './cn-payment-settings';
-import { isWechatPayLiveConfigured, WECHAT_PAY_SETTLEMENT_INFO, type WechatPayTransaction } from './wechat-pay';
+import { baseOrderNoFromTradeNo, isWechatPayLiveConfigured, WECHAT_PAY_SETTLEMENT_INFO, type WechatPayTransaction } from './wechat-pay';
 
 export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'partially_refunded';
 export type WalletEntryStatus = 'pending' | 'frozen' | 'available' | 'cancelled' | 'reversal' | 'paid';
@@ -150,6 +150,8 @@ export type LocalCnOrder = {
   createdAt: string;
   updatedAt: string;
   items: LocalCnOrderItem[];
+  wechatJsapiTradeNo?: string | null;
+  wechatPayIssuedAt?: string | null;
 };
 
 export type WalletEntry = {
@@ -625,7 +627,7 @@ export function syncWechatTransactionToLocalOrder(
   const synced = mutate((state) => {
     let order = state.orders.find(
       (entry) =>
-        entry.orderNo === transaction.out_trade_no ||
+        entry.orderNo === baseOrderNoFromTradeNo(transaction.out_trade_no) ||
         (Boolean(transaction.transaction_id) && entry.providerTransactionId === transaction.transaction_id)
     );
     const paidAmountFen = Number(transaction.amount?.total || 0);
@@ -984,6 +986,33 @@ function createSettlementEntries(state: CommerceState, order: LocalCnOrder) {
       });
     }
   }
+}
+
+export function setLocalCnOrderPaymentMethod(orderId: number, method: string, actorId: number | null = null) {
+  return mutate((state) => {
+    const order = state.orders.find((entry) => entry.id === orderId);
+    if (!order) throw new Error('找不到订单');
+    if (order.paymentStatus === 'paid' || order.paymentStatus === 'refunded') throw new Error('订单已付款，不能更换付款方式');
+    if (order.status === 'cancelled') throw new Error('订单已取消');
+    if (order.paymentMethod === method) return order;
+    const previous = order.paymentMethod;
+    order.paymentMethod = method;
+    order.paymentMode = method === 'bank_transfer' ? 'manual' : 'live';
+    order.updatedAt = new Date().toISOString();
+    appendAudit(state, { type: 'order.payment_method_changed', actorId: actorId ?? order.userId, entityType: 'order', entityId: String(order.id), detail: { from: previous, to: method } });
+    return order;
+  });
+}
+
+export function markLocalCnOrderWechatIssued(orderId: number, input: { jsapiTradeNo?: string | null }) {
+  return mutate((state) => {
+    const order = state.orders.find((entry) => entry.id === orderId);
+    if (!order) return null;
+    if (input.jsapiTradeNo) order.wechatJsapiTradeNo = input.jsapiTradeNo;
+    order.wechatPayIssuedAt = new Date().toISOString();
+    order.updatedAt = order.wechatPayIssuedAt;
+    return order;
+  });
 }
 
 export function recordPayment(input: { orderId: number; provider: string; providerTransactionId: string; eventId: string; verified: boolean; testMode: boolean; amountFen?: number; paidAt?: string; payloadDigest?: string; actorId?: number | null }) {

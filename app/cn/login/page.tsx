@@ -246,7 +246,7 @@ function CnLoginForm() {
             </svg>
           </div>
           <p className="text-xs font-semibold tracking-[0.2em] text-emerald-100 uppercase">
-            草木初心 · 中国区会员中心
+            糙米健康 · 中国区会员中心
           </p>
           <h1 className="mt-1 text-xl font-bold tracking-tight">
             {isWeChatBrowser ? '微信官方一键授权登录' : '微信扫码 · 手机号 · 邮箱登录'}

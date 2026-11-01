@@ -12,6 +12,7 @@ import {
   queryWechatPayment,
   queryWechatPaymentByTransactionId,
   WECHAT_PAY_SETTLEMENT_INFO,
+  wechatJsapiTradeNo,
 } from '@/lib/wechat-pay';
 
 export const dynamic = 'force-dynamic';
@@ -42,16 +43,37 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ paid: true, order, reconciliation: buildWechatReconciliationSummary() });
   }
 
-  const provider = getChinaPaymentProvider(order?.paymentMethod || 'wechat_pay');
+  const provider = getChinaPaymentProvider(order && (order.wechatPayIssuedAt || order.wechatJsapiTradeNo) ? 'wechat_pay' : (order?.paymentMethod || 'wechat_pay'));
   if (provider?.id !== 'wechat_pay' || !provider.liveConfigured) {
     if (!order) return NextResponse.json({ error: '找不到订单' }, { status: 404 });
     return NextResponse.json({ paid: false, order, testMode: Boolean(provider?.testMode) });
   }
 
   try {
-    const transaction = txIdInput
-      ? await queryWechatPaymentByTransactionId(txIdInput)
-      : await queryWechatPayment(orderNoInput || order!.orderNo);
+    let transaction;
+    if (txIdInput) {
+      transaction = await queryWechatPaymentByTransactionId(txIdInput);
+    } else {
+      const baseNo = orderNoInput || order!.orderNo;
+      const candidates = [baseNo, order?.wechatJsapiTradeNo || wechatJsapiTradeNo(baseNo)].filter((v, i, a) => v && a.indexOf(v) === i);
+      let lastError: unknown = null;
+      for (const tradeNo of candidates) {
+        try {
+          const tx = await queryWechatPayment(tradeNo);
+          if (!transaction || tx.trade_state === 'SUCCESS') transaction = tx;
+          if (tx.trade_state === 'SUCCESS') break;
+        } catch (error) {
+          lastError = error;
+          if ((error as { code?: string })?.code !== 'ORDER_NOT_EXIST') throw error;
+        }
+      }
+      if (!transaction) {
+        if (order && (lastError as { code?: string })?.code === 'ORDER_NOT_EXIST') {
+          return NextResponse.json({ paid: false, tradeState: 'NOT_CREATED', message: '尚未发起微信付款，请点击「去付款」', order });
+        }
+        throw lastError || new Error('微信支付查单失败');
+      }
+    }
     const syncedOrder = syncWechatTransactionToLocalOrder(transaction, {
       productName: body.productName,
       actorId: user.id,

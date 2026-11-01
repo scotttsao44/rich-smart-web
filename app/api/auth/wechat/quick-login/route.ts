@@ -51,7 +51,7 @@ function buildMemberPayload(user: NonNullable<ReturnType<typeof findLocalCnUserB
     referralCode: user.referralCode,
     referredByMemberId: referrer?.id || user.referredByMemberId || null,
     referrerCode: referrer?.referralCode || user.referrerCode || CAOMI_OFFICIAL_REFERRAL_CODE,
-    referrerName: referrer?.name || '草木初心官方直属',
+    referrerName: referrer?.name || '糙米健康官方直属',
     profileAuthorized: Boolean(user.profileAuthorizedAt),
     onboardingCompleted: Boolean(user.onboardingCompletedAt),
   };
@@ -93,14 +93,18 @@ export async function POST(request: NextRequest) {
     const rawEmail = String(body.email || '').trim().toLowerCase();
     const authorizeProfile = Boolean(body.authorizeProfile);
     const bodyReferrerCode = String(body.referrerCode || '').trim().toUpperCase();
+    // Only honor explicit forceNew from the client. Do NOT auto-forceNew when the user is
+    // saving/updating nickname or profile on an existing WeChat session — that was creating a
+    // brand-new wx_quick_* member and made「保存昵称 / 确认授权并保存会员资料」appear broken.
     let forceNew = Boolean(body.forceNew);
 
-    const activeSession = !forceNew ? await getFreshSessionUser(request).catch(() => null) : null;
-    if (activeSession?.id) {
+    // 已登录会员保存资料（authorizeProfile）一律视为更新本人资料，不因 forceNew 另建会员
+    const activeSession = (!forceNew || authorizeProfile) ? await getFreshSessionUser(request).catch(() => null) : null;
+    if (activeSession?.id && !authorizeProfile) {
       const existing = findLocalCnUserById(activeSession.id);
       if (existing) {
-        // If user came in with a referral code belonging to themselves or different from their existing referrer,
-        // or entered a different nickname to register a new member, treat as forceNew so multi-level testing works seamlessly.
+        // Multi-level quick-login testing (non-profile flows only): treat self-ref / changed
+        // referrer / different nickname as a request to mint a fresh test member.
         const existingRef = String(existing.referrerCode || '').trim().toUpperCase();
         const existingOwnCode = String(existing.referralCode || '').trim().toUpperCase();
         if (
@@ -112,14 +116,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (authorizeProfile && activeSession?.id && !forceNew) {
+    if (authorizeProfile && activeSession?.id) {
       const existing = findLocalCnUserById(activeSession.id);
       if (existing) {
         const updated = updateLocalCnMemberProfile(existing.id, {
           name: rawNickname || existing.name,
           phone: rawPhone || undefined,
           email: rawEmail || undefined,
-          referrerCode: bodyReferrerCode || undefined,
+          // 已绑定推荐人的会员不改绑；也不允许绑定自己的推荐码
+          referrerCode: !existing.referredByMemberId && bodyReferrerCode && bodyReferrerCode !== String(existing.referralCode || '').toUpperCase()
+            ? bodyReferrerCode
+            : undefined,
         });
         ensureLocalCnReferralLink(updated.id);
         const sessionUser = toSessionUser(updated);
@@ -135,6 +142,11 @@ export async function POST(request: NextRequest) {
         clearResidualWechatCookie(response);
         return response;
       }
+    }
+
+    // 生产环境不再以随机 wx_quick_ openid 建立会员（每次都会产生新会员/新推荐码）；必须走微信公众号真实 OAuth
+    if (process.env.NODE_ENV === 'production' && process.env.CN_QUICK_LOGIN_TEST !== 'true') {
+      return NextResponse.json({ error: '请在微信内打开或使用微信扫一扫登录', requiresWechatOAuth: true }, { status: 403 });
     }
 
     // Always generate a fresh identity token; never reuse residual rs_wx_identity cookies or device tokens
@@ -225,6 +237,39 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : '微信一键登录失败，请稍后重试' },
+      { status: 400 },
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const session = await getFreshSessionUser(request).catch(() => null);
+    if (!session?.id) {
+      return NextResponse.json({ error: '请先登录后再修改昵称' }, { status: 401 });
+    }
+    const body = await request.json().catch(() => ({}));
+    const nickname = String(body.nickname || body.name || '').trim();
+    if (!nickname) {
+      return NextResponse.json({ error: '请填写昵称' }, { status: 400 });
+    }
+    const updated = updateLocalCnMemberProfile(session.id, { name: nickname });
+    ensureLocalCnReferralLink(updated.id);
+    const sessionUser = toSessionUser(updated);
+    const token = createSessionToken(sessionUser);
+    const response = NextResponse.json({
+      user: sessionUser,
+      member: buildMemberPayload(updated),
+      token,
+      isNew: false,
+      authMode: 'session_nickname_patch',
+    });
+    setSessionCookie(response, sessionUser);
+    clearResidualWechatCookie(response);
+    return response;
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : '昵称更新失败' },
       { status: 400 },
     );
   }

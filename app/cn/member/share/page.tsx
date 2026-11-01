@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/app/providers';
 import ReferralQrCode from '@/components/ReferralQrCode';
+import WechatShareButton from '@/components/WechatShareButton';
 
 interface TeamMemberRow {
   id: number | string;
@@ -185,7 +186,7 @@ export default function MemberShareWorkbenchPage() {
             <div>
               <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-xs font-bold">
                 <Sparkles className="h-3.5 w-3.5" />
-                草木初心 · 会员推广工作台与分享海报中心
+                糙米健康 · 会员推广工作台与分享海报中心
               </span>
               <h1 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">
                 {user.name} 的专属裂变推广中心
@@ -270,7 +271,7 @@ export default function MemberShareWorkbenchPage() {
               <div className="rounded-2xl border border-emerald-900/15 bg-emerald-50/50 p-4">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold text-emerald-900">
-                    方式一：草木初心全站主入口推广链接（推荐发朋友圈/微信群）
+                    方式一：糙米健康全站主入口推广链接（推荐发朋友圈/微信群）
                   </span>
                   <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-emerald-800">
                     主力推荐
@@ -288,6 +289,7 @@ export default function MemberShareWorkbenchPage() {
                     <Copy className="h-3.5 w-3.5" />
                     {copiedType === 'main' ? '✓ 已复制主入口链接' : '复制主入口链接'}
                   </button>
+                  <WechatShareButton referralCode={myCode} nickname={user.name} />
                 </div>
               </div>
 
@@ -325,7 +327,7 @@ export default function MemberShareWorkbenchPage() {
                 专属微信推广二维码海报
               </span>
               <h3 className="mt-2 text-base font-bold text-stone-900">
-                {user.name} 邀您体验草木初心
+                {user.name} 邀您体验糙米健康
               </h3>
               <p className="mt-0.5 text-xs text-stone-500">
                 微信扫一扫 · 自动绑定推荐码 {myCode}

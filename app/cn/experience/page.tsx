@@ -5,6 +5,7 @@ import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/app/providers';
 import ReferralQrCode from '@/components/ReferralQrCode';
+import WechatShareButton from '@/components/WechatShareButton';
 
 interface ExperienceMemberInfo {
   id: number;
@@ -81,29 +82,38 @@ function CnExperienceContent() {
 
       // If URL explicitly has ?ref=... for inviting a new downline member, only restore session if it's not a new referral registration
       const meRes = await fetch('/api/auth/me', { cache: 'no-store' });
-      if (meRes.ok) {
-        const meData = await meRes.json();
+      const meData = meRes.ok ? await meRes.json().catch(() => null) : null;
+      const inWechat = typeof navigator !== 'undefined' && /micromessenger/i.test(navigator.userAgent || '');
+      // 微信内打开推荐链接且未登录：直接走公众号授权登录，带上链接推荐码，回来即为已登录会员
+      if (inWechat && !meData?.user) {
+        const qs = new URLSearchParams();
+        if (refFromUrl) qs.set('ref', refFromUrl);
+        qs.set('returnTo', `/cn/experience${refFromUrl ? `?ref=${encodeURIComponent(refFromUrl)}` : ''}`);
+        window.location.replace(`/api/auth/wechat/official/start?${qs.toString()}`);
+        return;
+      }
+      if (meData) {
         if (meData?.user) {
           const u = meData.user;
           const uOwnCode = String(u.referralCode || '').trim().toUpperCase();
           // If the visitor clicked a referral link (?ref=...), start fresh registration if the logged-in user is the referrer themselves or another account
-          if (refFromUrl && uOwnCode === refFromUrl) {
-            setMember(null);
-            setNickname('');
-            setPhone('');
-            setEmail('');
-          } else if (!refFromUrl) {
+          // 已登录会员打开自己的推荐链接：视为更新本人资料（不清空、不自我推荐）
+          if (!refFromUrl || inWechat || uOwnCode === refFromUrl) {
+            const ownRefCode = String(u.referrerCode || resolvedRefCode || '').trim().toUpperCase() || resolvedRefCode;
+            const ownRefName = String(u.referrerName || resolvedRefName || '').trim() || resolvedRefName;
             setMember({
               id: u.id,
               name: u.name,
               phone: u.phone || '',
               email: u.email && !String(u.email).endsWith('@local.invalid') ? u.email : '',
               referralCode: u.referralCode || '',
-              referrerCode: resolvedRefCode,
-              referrerName: resolvedRefName,
+              referrerCode: ownRefCode,
+              referrerName: ownRefName,
               profileAuthorized: true,
               onboardingCompleted: true,
             });
+            setReferrerCode(ownRefCode);
+            setReferrerName(ownRefName);
             setNickname(u.name || '');
             setPhone(u.phone || '');
             setEmail(u.email && !String(u.email).endsWith('@local.invalid') ? u.email : '');
@@ -134,9 +144,17 @@ function CnExperienceContent() {
     setSubmitting(true);
 
     try {
-      const effectiveRefCode = (refFromUrl || referrerCode || 'RS-CN-SCOOT').trim().toUpperCase();
+      // Existing logged-in WeChat members are profile updates; only referral links mint a new member.
+      // 已登录会员（含打开自己推荐链接）一律为资料更新，不另建会员、不改推荐人
+      const isNewRegistration = !member;
+      const effectiveRefCode = (
+        isNewRegistration
+          ? (refFromUrl || referrerCode || 'RS-CN-SCOOT')
+          : (member?.referrerCode || referrerCode || 'RS-CN-SCOOT')
+      ).trim().toUpperCase();
       const postRes = await fetch('/api/auth/wechat/quick-login', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
           'Content-Type': 'application/json',
           'x-referral-code': effectiveRefCode,
@@ -147,7 +165,7 @@ function CnExperienceContent() {
           email: email.trim() || undefined,
           referrerCode: effectiveRefCode,
           authorizeProfile: true,
-          forceNew: Boolean(refFromUrl) || !member,
+          forceNew: isNewRegistration,
         }),
       });
       const postData = await postRes.json();
@@ -163,6 +181,7 @@ function CnExperienceContent() {
         if (postData.member.referrerName) setReferrerName(postData.member.referrerName);
       }
       setSuccessMsg('您的微信会员身份与专属推广链接已激活！');
+      router.push('/cn/member');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : '操作失败，请稍后重试');
     } finally {
@@ -196,7 +215,7 @@ function CnExperienceContent() {
                 微信一键极速体验通道
               </span>
               <h1 className="mt-2.5 text-2xl font-bold tracking-tight">
-                草木初心 · 微信尊享会员卡
+                糙米健康 · 微信尊享会员卡
               </h1>
               <p className="mt-1 text-xs text-emerald-50/90">
                 免验证码 · 微信身份直通 · 自动激活您的专属推广码与分享海报
@@ -246,12 +265,6 @@ function CnExperienceContent() {
               </span>
             )}
           </div>
-
-          {error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
-              {error}
-            </div>
-          )}
 
           {successMsg && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-medium text-emerald-800">
@@ -317,6 +330,12 @@ function CnExperienceContent() {
               </div>
             </div>
 
+            {error && (
+              <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+                {error}
+              </div>
+            )}
+
             <div className="flex flex-wrap items-center gap-3 pt-1">
               <button
                 type="submit"
@@ -364,6 +383,7 @@ function CnExperienceContent() {
                 >
                   {copiedLink ? '✓ 已复制链接' : '复制推广链接'}
                 </button>
+                <WechatShareButton referralCode={member?.referralCode} nickname={user?.name || member?.name} />
                 <button
                   type="button"
                   onClick={() => setShowQrPreview(!showQrPreview)}
@@ -387,7 +407,7 @@ function CnExperienceContent() {
                 className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-4 hover:border-emerald-700/30 hover:bg-emerald-50/30 transition"
               >
                 <p className="text-xs font-bold text-emerald-800">01 · 商城选购</p>
-                <p className="mt-1 text-sm font-bold text-slate-900">浏览草木初心商城</p>
+                <p className="mt-1 text-sm font-bold text-slate-900">浏览糙米健康商城</p>
                 <p className="mt-0.5 text-xs text-slate-500">支持微信支付与会员专享价</p>
               </Link>
 

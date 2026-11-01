@@ -178,8 +178,9 @@ function updateLegacyWechatFields(user: LocalCnUser, input: ResolveWechatIdentit
     user.phone = normalizeStoredVerifiedPhone(input.verifiedPhone);
     user.phoneVerifiedAt = now;
   }
-  if (input.displayName && input.displayName !== '微信会员' && !input.displayName.startsWith('微信会员_')) user.name = input.displayName;
-  else if (input.displayName && (!user.name || user.name === '微信会员')) user.name = input.displayName;
+  // 只在会员尚无自订昵称（空或系统占位名）时采用微信昵称；会员自行保存的昵称不被后续登录覆盖
+  const placeholderName = !user.name || user.name === '微信会员' || user.name.startsWith('微信会员_') || user.name.startsWith('微信用户_');
+  if (input.displayName && placeholderName) user.name = input.displayName;
   if (input.avatarUrl) user.avatarUrl = input.avatarUrl;
   user.profileAuthorizedAt = user.profileAuthorizedAt || now;
 }

@@ -60,6 +60,15 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // 「方式一」推荐链接 /cn?ref=…：微信内未登录时直接走公众号授权登录，回到同一商城链接
+  const shareRef = (request.nextUrl.searchParams.get('ref') || '').trim();
+  if (pathname === '/cn' && shareRef && !signedIn && /micromessenger/i.test(request.headers.get('user-agent') || '')) {
+    const startUrl = new URL('/api/auth/wechat/official/start', requestOrigin(request));
+    startUrl.searchParams.set('ref', shareRef);
+    startUrl.searchParams.set('returnTo', `${CN_HOME}${search || ''}`);
+    return NextResponse.redirect(startUrl);
+  }
+
   if (pathname === '/' || pathname === '/cn') {
     return redirectTo(request, `${CN_HOME}${search || ''}`);
   }

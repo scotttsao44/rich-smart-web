@@ -199,9 +199,10 @@ export async function finishWechatWebOAuth(request: NextRequest, kind: WechatWeb
     if (!provider.appId || !provider.appSecret) throw new Error('微信登入尚未配置');
     const state = verifyOAuthState(request, provider.provider, request.nextUrl.searchParams.get('state'));
     const pendingReferral = readPendingReferralAttribution(request);
-    referralCode = pendingReferral
+    // 链接上的推荐码（写入 OAuth state）优先于残留的待归属 cookie
+    referralCode = state.referralCode || (pendingReferral
       ? normalizeCnReferrerCode(findLocalCnUserById(pendingReferral.referrerMemberId)?.referralCode)
-      : state.referralCode || '';
+      : '');
     if (state.bindMemberId) {
       const currentUser = await getFreshSessionUser(request).catch(() => null);
       if (!currentUser || currentUser.region !== 'CN' || currentUser.id !== state.bindMemberId) {
@@ -262,10 +263,10 @@ export async function finishWechatWebOAuth(request: NextRequest, kind: WechatWeb
       if (refUser && !localUser.referredByMemberId && localUser.id !== refUser.id) {
         bindImmutableLocalCnReferral({
           memberId: localUser.id,
-          referrerMemberId: pendingReferral?.referrerMemberId || refUser.id,
+          referrerMemberId: refUser.id,
           source: kind === 'official' ? 'wechat_official_oauth' : 'wechat_open_oauth',
-          attributionId: pendingReferral?.attributionId || null,
-          visitId: pendingReferral?.visitId || null,
+          attributionId: pendingReferral?.referrerMemberId === refUser.id ? pendingReferral.attributionId || null : null,
+          visitId: pendingReferral?.referrerMemberId === refUser.id ? pendingReferral.visitId || null : null,
         });
       }
       grantLocalCnPromotionQualification(localUser.id, {

@@ -143,6 +143,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: '二维码已过期，请刷新电脑端二维码后重新扫描' }, { status: 400 });
       }
 
+      // 扫码登录只接受微信公众号真实 OAuth（/api/auth/wechat/official/callback 确认会话）；不再以随机 openid 建会员
+      if (process.env.NODE_ENV === 'production' && process.env.CN_QUICK_LOGIN_TEST !== 'true') {
+        return NextResponse.json({ error: '请使用微信扫一扫扫码，并在微信内完成授权', requiresWechatOAuth: true }, { status: 403 });
+      }
+
       const rawNickname = String(body.nickname || '').trim().slice(0, 60);
       const rawToken = randomBytes(12).toString('hex');
       const digest = createHash('sha256').update(`caomi-wx-quick:${rawToken}`).digest('hex').slice(0, 24);

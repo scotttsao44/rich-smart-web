@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { NextResponse } from 'next/server';
 import { getChinaPaymentProvider, isBrandPilotPaymentContext, verifyPaymentCallback } from '@/lib/cn-payments';
 import { getLocalCnOrder, getLocalCnOrderByOrderNo, getRefundByOutRefundNo, recordPayment, recordRefundResult } from '@/lib/local-cn-commerce';
-import { decryptWechatPayNotification, decryptWechatRefundNotification, validateWechatRefund, validateWechatTransaction, verifyWechatPayNotification, yuanToFen } from '@/lib/wechat-pay';
+import { baseOrderNoFromTradeNo, decryptWechatPayNotification, decryptWechatRefundNotification, validateWechatRefund, validateWechatTransaction, verifyWechatPayNotification, yuanToFen } from '@/lib/wechat-pay';
 
 export async function POST(request: Request, { params }: { params: { provider: string } }) {
   const provider = getChinaPaymentProvider(params.provider);
@@ -18,7 +18,7 @@ export async function POST(request: Request, { params }: { params: { provider: s
       if (!notification.resource) return new NextResponse(null, { status: 204 });
       if (notification.event_type === 'TRANSACTION.SUCCESS') {
         const transaction = decryptWechatPayNotification(notification.resource);
-        const order = getLocalCnOrderByOrderNo(transaction.out_trade_no);
+        const order = getLocalCnOrderByOrderNo(baseOrderNoFromTradeNo(transaction.out_trade_no));
         if (!order) throw new Error('找不到微信支付对应订单');
         if (await isBrandPilotPaymentContext({ orderUserId: order.userId })) {
           return NextResponse.json({ code: 'FAIL', message: '品牌 Pilot 测试订单禁止真实支付回调入账' }, { status: 503 });

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Package, RefreshCw, ShoppingBag, CheckCircle2, Clock, Truck } from 'lucide-react';
 import { useAuth } from '@/app/providers';
+import OrderPayPanel, { isOrderUnpaid } from '@/components/OrderPayPanel';
 
 interface MemberOrderItem {
   id?: number;
@@ -92,7 +93,7 @@ export default function ChinaOrdersPage() {
           <div>
             <div className="flex items-center gap-3 text-sm font-semibold">
               <Link href="/cn/shop" className="text-amber-700 hover:text-amber-800">
-                ← 返回草木初心商城
+                ← 返回糙米健康商城
               </Link>
               <span className="text-stone-300">|</span>
               <Link href="/cn/member" className="text-emerald-800 hover:text-emerald-900">
@@ -103,7 +104,7 @@ export default function ChinaOrdersPage() {
               我的订单
             </h1>
             <p className="mt-1 text-sm text-stone-600">
-              查看您在草木初心商城的个人选购订单、付款状态与收货信息
+              查看您在糙米健康商城的个人选购订单、付款状态与收货信息
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -139,7 +140,7 @@ export default function ChinaOrdersPage() {
               </div>
               <h2 className="text-lg font-bold text-stone-900">暂无个人订单记录</h2>
               <p className="mt-1 text-sm text-stone-500">
-                您还没有提交过商城订单，欢迎前往草木初心商城选购健康好物
+                您还没有提交过商城订单，欢迎前往糙米健康商城选购健康好物
               </p>
               <div className="mt-6 flex justify-center gap-3">
                 <Link
@@ -203,7 +204,7 @@ export default function ChinaOrdersPage() {
                           </div>
                         ))
                       ) : (
-                        <div className="text-sm text-stone-600">草木初心商城订单商品</div>
+                        <div className="text-sm text-stone-600">糙米健康商城订单商品</div>
                       )}
                     </div>
 
@@ -224,6 +225,9 @@ export default function ChinaOrdersPage() {
                         </span>
                       </div>
                     </div>
+                    {isOrderUnpaid(order) ? (
+                      <OrderPayPanel compact order={order} onOrderUpdated={(o) => setOrders((prev) => prev.map((x) => (x.id === o.id ? { ...x, ...(o as MemberOrder) } : x)))} />
+                    ) : null}
                   </div>
                 );
               })}
