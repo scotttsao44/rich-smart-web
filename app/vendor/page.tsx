@@ -23,6 +23,7 @@ type BrandSummary = {
   brandName: string;
   companyName: string;
   category: string;
+  slug?: string | null;
   status: 'pending' | 'approved' | 'rejected';
   reviewNote?: string;
 };
@@ -181,7 +182,7 @@ export default function VendorDashboardPage() {
                 <Link href="/cn/brand/entity" className="rounded-lg border border-stone-300 bg-white px-3 py-1 text-sm font-black text-stone-700 hover:bg-stone-50">
                   变更公司主体
                 </Link>
-                <Link href={`/cn/brands/${brand.id}`} className="rounded-lg border border-teal-700 bg-teal-50 px-3 py-1 text-sm font-black text-teal-800 hover:bg-teal-100">
+                <Link href={`/cn/brands/${encodeURIComponent(String(brand.slug || '').trim() || String(brand.id))}`} className="rounded-lg border border-teal-700 bg-teal-50 px-3 py-1 text-sm font-black text-teal-800 hover:bg-teal-100">
                   查看品牌馆前台 →
                 </Link>
               </div>
