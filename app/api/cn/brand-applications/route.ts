@@ -51,7 +51,9 @@ export async function POST(request: NextRequest) {
     if (brandPilotDbEnabled()) {
       return NextResponse.json({ application: await submitDbBrandApplication(user, await request.json()) }, { status: 201 });
     }
-    return NextResponse.json({ application: submitBrandApplication(user, await request.json()) }, { status: 201 });
+    // 忽略客户端 autoApprove：仅平台管理员（伺服器端检查）可直接核准，其他账号一律待平台审核
+    const { autoApprove: _clientAutoApprove, ...input } = ((await request.json().catch(() => ({}))) || {}) as Record<string, unknown>;
+    return NextResponse.json({ application: submitBrandApplication(user, { ...input, autoApprove: hasPlatformAdminAccess(user) }) }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : '提交失败';
     return NextResponse.json({ error: message }, { status: message.includes('重复') || message.includes('已经') ? 409 : 400 });

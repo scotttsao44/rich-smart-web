@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { getFreshSessionUser } from '@/lib/auth';
+import { getFreshSessionUser, hasPlatformAdminAccess } from '@/lib/auth';
 import {
   createBrandProduct,
   getApprovedBrandForUser,
@@ -391,7 +391,8 @@ export async function POST(request: NextRequest) {
 
       let submittedBrand = null;
       if (body.autoSubmit && user) {
-        const autoApprove = body.autoApprove !== false;
+        // 仅平台管理员可直接核准；其他账号提交后待平台审核（lib 内亦有同样检查）
+        const autoApprove = body.autoApprove !== false && hasPlatformAdminAccess(user);
         submittedBrand = submitBrandApplication(user, {
           ...fullDraft,
           allowUpdatePending: true,
@@ -429,7 +430,9 @@ export async function POST(request: NextRequest) {
         autoSubmitted: Boolean(submittedBrand),
         autoApproved: submittedBrand?.status === 'approved',
         agentReply: submittedBrand
-          ? `🎉 AI Agent 已为您一键完成「${fullDraft.brandName}（${fullDraft.companyName}）」全套工商与类目核验，并已直接开通品牌馆与品牌中心工作台！`
+          ? submittedBrand.status === 'approved'
+            ? `🎉 AI Agent 已为您完成「${fullDraft.brandName}（${fullDraft.companyName}）」资料整理，并已开通品牌馆与品牌中心工作台。`
+            : `✅ AI Agent 已为您整理并提交「${fullDraft.brandName}（${fullDraft.companyName}）」品牌申请，平台审核通过后即可开通品牌馆与品牌中心工作台。`
           : `✨ AI Agent 已为您自动填好「${fullDraft.brandName}（${fullDraft.companyName}）」全部 16 项工商、类目与品牌介绍栏位，可直接一键提交开通！`,
       });
     }
@@ -445,6 +448,9 @@ export async function POST(request: NextRequest) {
 
       let publishedProduct = null;
       if (body.autoPublish) {
+        if (!approvedBrand && !hasPlatformAdminAccess(user)) {
+          throw new Error('品牌尚未通过平台审核，请先提交品牌申请并等待审核通过后再上架商品');
+        }
         if (!approvedBrand) {
           const brandParsed = parseBrandPrompt(brandName, {}, user.name || '曹先生');
           const licenseDoc = ensureUserLicenseDocument(user.id);
@@ -480,7 +486,9 @@ export async function POST(request: NextRequest) {
         product: publishedProduct,
         autoPublished: publishedProduct?.status === 'approved',
         agentReply: publishedProduct
-          ? publishedProduct.status === 'approved'
+          ? publishedProduct.pendingRevision
+            ? `✅ AI Agent 已把「${publishedProduct.name}」的修改提交平台审核；审核通过前商城继续显示当前上架版本。`
+            : publishedProduct.status === 'approved'
             ? `🚀 AI Agent 已为您生成并直接上架「${publishedProduct.name}」（售价 ¥${publishedProduct.priceCny}），现已同步至商城与您的品牌馆！`
             : `✅ AI Agent 已生成「${publishedProduct.name}」（售价 ¥${publishedProduct.priceCny}）并提交平台审核，审核通过后自动上架。`
           : agentReply,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useAuth } from '@/app/providers';
 import { useRouter } from 'next/navigation';
 import { Package, Plus, Pencil, Trash2, X } from 'lucide-react';
@@ -20,6 +20,11 @@ interface Product {
   reviewStatus: string | null;
   reviewNote: string | null;
   editUrl?: string | null;
+  pendingRevision?: {
+    submittedAt: string;
+    submittedByName?: string;
+    changes: Array<{ key: string; label: string; before: string; after: string }>;
+  } | null;
 }
 
 const emptyForm = {
@@ -181,6 +186,33 @@ export default function AdminProducts() {
       fetchProducts();
     } catch {
       setMessage('审核失败');
+    }
+  };
+
+  const handleRevision = async (product: Product, revisionDecision: 'approved' | 'rejected') => {
+    setMessage('');
+    let reviewNote = '';
+    if (revisionDecision === 'rejected') {
+      reviewNote = (prompt('请输入驳回修改的原因') || '').trim();
+      if (!reviewNote) return;
+    } else if (!confirm(`确定通过「${product.name}」的修改并套用到线上？`)) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/admin/products', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: product.id, revisionDecision, reviewNote }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setMessage(revisionDecision === 'approved' ? '修改已通过并套用到线上商品' : '修改已驳回，线上商品保持原样');
+      } else {
+        setMessage(data.message || data.error || '审核修改失败');
+      }
+      fetchProducts();
+    } catch {
+      setMessage('审核修改失败');
     }
   };
 
@@ -390,7 +422,8 @@ export default function AdminProducts() {
               </thead>
               <tbody>
                 {products.map((product) => (
-                  <tr key={product.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  <Fragment key={product.id}>
+                  <tr className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-3 px-2 text-gray-500">{product.id}</td>
                     <td className="py-3 px-2 font-medium text-gray-900">{product.name}</td>
                     <td className="py-3 px-2 text-gray-700">{product.supplierName || '-'}</td>
@@ -403,6 +436,7 @@ export default function AdminProducts() {
                       {product.reviewStatus === 'pending' ? <span className="badge-amber">待审核</span> : null}
                       {product.reviewStatus === 'rejected' ? <span className="badge-red">已退回</span> : null}
                       {!product.reviewStatus && !product.isActive ? <span className="badge-gray">已下架</span> : null}
+                      {product.pendingRevision ? <span className="badge-amber ml-1">修改待审</span> : null}
                     </td>
                     <td className="py-3 px-2 text-right">
                       {product.reviewStatus === 'pending' && (
@@ -445,6 +479,29 @@ export default function AdminProducts() {
                       </button>
                     </td>
                   </tr>
+                  {product.pendingRevision ? (
+                    <tr className="border-b border-amber-100 bg-amber-50/60">
+                      <td colSpan={9} className="px-2 py-3">
+                        <div className="text-xs font-bold text-amber-900">
+                          品牌提交的修改（线上仍显示当前版本）· {product.pendingRevision.submittedByName || '品牌'} · {new Date(product.pendingRevision.submittedAt).toLocaleString('zh-CN', { hour12: false })}
+                        </div>
+                        <div className="mt-2 grid gap-1">
+                          {product.pendingRevision.changes.map((change) => (
+                            <div key={change.key} className="grid grid-cols-[7rem_1fr] gap-2 text-xs md:grid-cols-[8rem_1fr_1fr]">
+                              <span className="font-semibold text-gray-700">{change.label}</span>
+                              <span className="break-all text-gray-500 line-through">{change.before}</span>
+                              <span className="break-all font-semibold text-gray-900 md:col-start-3 col-start-2">{change.after}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-3 flex gap-3">
+                          <button onClick={() => handleRevision(product, 'approved')} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-green-700">通过修改并套用</button>
+                          <button onClick={() => handleRevision(product, 'rejected')} className="rounded-lg border border-red-300 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50">驳回修改</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

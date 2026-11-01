@@ -34,9 +34,11 @@ export default function EditVendorProductPage() {
     fetch(`/api/vendor/products/${params.id}`)
       .then(async (res) => {
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || '读取商品失败');
+        if (!res.ok) throw new Error(data.message || data.error || '读取商品失败');
         setProduct(data.product);
-        setForm(productToFormValues(data.product));
+        // 若有待审核的修改，表单显示修改后的内容（线上仍为原版本）
+        const revisionFields = data.product?.pendingRevision?.fields;
+        setForm(productToFormValues(revisionFields ? { ...data.product, ...revisionFields } : data.product));
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -116,7 +118,7 @@ export default function EditVendorProductPage() {
         body: JSON.stringify({ ...form, autoApprove }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || '更新失败');
+      if (!res.ok) throw new Error(data.message || data.error || '更新失败');
       if (autoApprove) {
         setSuccessMsg(data.message || '🎉 商品修改已立即生效并同步至商城！');
         if (data.product) setProduct(data.product);
@@ -152,6 +154,16 @@ export default function EditVendorProductPage() {
         {loading ? <div className="mt-6 rounded-lg bg-white p-6">读取中...</div> : null}
         {error ? <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">{error}</div> : null}
         {successMsg ? <div className="mt-4 rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-sm font-black text-emerald-900">{successMsg}</div> : null}
+
+        {product?.pendingRevision ? (
+          <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm font-bold text-amber-900">
+            您的修改正在等待平台审核（提交于 {new Date(product.pendingRevision.submittedAt).toLocaleString('zh-CN', { hour12: false })}）。审核通过前，商城继续显示当前上架版本；下方表单为您提交的修改内容。
+          </div>
+        ) : product?.lastRevisionReview?.decision === 'rejected' ? (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-900">
+            上次修改未通过审核：{product.lastRevisionReview.note}（商城仍为原版本）
+          </div>
+        ) : null}
 
         {product?.rejectionReason ? (
           <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-900">

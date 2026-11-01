@@ -90,6 +90,15 @@ export type LocalCnBrand = {
   updatedAt: string;
 };
 
+// 已上架商品由非平台管理员修改时，修改内容先存为待审核修订；线上版本保持不变，管理员通过后才套用
+export type BrandProductRevision = {
+  fields: Record<string, unknown>;
+  before: Record<string, unknown>;
+  submittedAt: string;
+  submittedBy: number;
+  submittedByName?: string;
+};
+
 export type LocalCnBrandProduct = {
   id: number;
   slug: string;
@@ -128,6 +137,8 @@ export type LocalCnBrandProduct = {
   updatedAt: string;
   sold?: number;
   rating?: string;
+  pendingRevision?: BrandProductRevision | null;
+  lastRevisionReview?: { decision: 'approved' | 'rejected'; note: string; reviewedAt: string; reviewedBy: number } | null;
   tag?: string;
 };
 
@@ -435,8 +446,9 @@ export function submitBrandApplication(user: SessionUser, input: Record<string, 
         ? state.brands.find((row) => row.id === normalized.referrerBrandId && row.status === 'approved')
         : null;
     if ((normalized.referrerBrandId || normalized.referrerBrandCode) && !referrer) throw new Error('品牌招商推荐码无效，或该推荐商尚未通过审核');
-    const allowUpdatePending = Boolean(input.allowUpdatePending || input.autoApprove);
-    const autoApprove = Boolean(input.autoApprove);
+    // 只有平台管理员（伺服器端检查）可以直接核准品牌；其他账号一律待平台审核（忽略客户端 autoApprove）
+    const autoApprove = Boolean(input.autoApprove) && hasPlatformAdminAccess(user);
+    const allowUpdatePending = Boolean(input.allowUpdatePending || autoApprove);
     const own = state.brands.find((row) => row.applicantUserId === user.id || row.accountUserId === user.id);
     if (own?.status === 'pending' && !allowUpdatePending) throw new Error('当前已有待审核的品牌申请，请勿重复提交');
     if (own?.status === 'approved' && !autoApprove) throw new Error('当前账号已经绑定审核通过的品牌');
@@ -457,17 +469,17 @@ export function submitBrandApplication(user: SessionUser, input: Record<string, 
       status: finalStatus,
       accountUserId: finalStatus === 'approved' ? user.id : row.accountUserId,
       brandReferralCode: finalStatus === 'approved' ? (row.brandReferralCode || `BR-${Math.abs(row.id).toString(36).toUpperCase()}`) : row.brandReferralCode,
-      reviewNote: finalStatus === 'approved' ? 'AI Agent 极速通道智能核验通过' : '',
+      reviewNote: finalStatus === 'approved' ? (own?.status === 'approved' ? (row.reviewNote || '平台管理员更新') : '平台管理员直接核准') : '',
       submittedAt: now,
-      reviewedAt: finalStatus === 'approved' ? now : null,
-      reviewedBy: finalStatus === 'approved' ? user.id : null,
+      reviewedAt: finalStatus === 'approved' ? (own?.status === 'approved' ? (row.reviewedAt || now) : now) : null,
+      reviewedBy: finalStatus === 'approved' ? (own?.status === 'approved' ? (row.reviewedBy || user.id) : user.id) : null,
       updatedAt: now,
     });
     if (finalStatus === 'approved' && !row.brandPage) {
       row.brandPage = createBrandPageRecord(row.brandName, row.introduction, true);
     }
     if (!own) state.brands.unshift(row);
-    audit(state, user, 'brand', row.id, finalStatus === 'approved' ? 'brand_approved' : (own ? 'brand_resubmitted' : 'brand_submitted'), finalStatus === 'approved' ? `${row.brandName}通过 AI Agent 极速通道自动核验并开通品牌馆` : `${row.brandName}提交平台审核`);
+    audit(state, user, 'brand', row.id, finalStatus === 'approved' ? 'brand_approved' : (own ? 'brand_resubmitted' : 'brand_submitted'), finalStatus === 'approved' ? `${row.brandName}由平台管理员直接核准并开通品牌馆` : `${row.brandName}提交平台审核`);
     return row;
   });
 }
@@ -498,7 +510,8 @@ export function listPublicBrandProducts() {
     && row.salesStatus === 'active'
     && row.stockQuantity > 0
     && approvedBrands.has(row.brandId)
-    && !isPlaceholderProduct(row));
+    && !isPlaceholderProduct(row))
+    .map(({ pendingRevision: _pendingRevision, lastRevisionReview: _lastRevisionReview, ...row }) => row as LocalCnBrandProduct);
 }
 
 export function getPublicBrandProduct(id: number) {
@@ -592,7 +605,35 @@ export function updateBrandProduct(user: SessionUser, id: number, action: 'resub
     const allowAnyStatus = action === 'edit' || Boolean(input.allowAnyStatus || adminApprove);
     if (row.status !== 'rejected' && !allowAnyStatus) throw new Error('只有被退回的商品可以补充后重新提交');
     const normalized = ensureProductInput(input);
-    const keepApproved = adminApprove || (allowAnyStatus && row.status === 'approved');
+    const isPlatformAdmin = hasPlatformAdminAccess(user);
+    if (row.status === 'approved' && !isPlatformAdmin) {
+      // 非平台管理员修改已上架商品：线上版本不变，修改存为待审核修订，由平台在 /admin/products 核准或驳回
+      const candidate: Record<string, unknown> = {
+        ...normalized,
+        sku: normalized.sku || row.sku,
+        imageIsTest: Boolean(input.imageIsTest),
+        imageDisclosure: Boolean(input.imageIsTest) ? '商品参考图' : '',
+        priceTwd: normalized.priceCny,
+      };
+      const current = row as unknown as Record<string, unknown>;
+      const fields: Record<string, unknown> = {};
+      const before: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(candidate)) {
+        const was = current[key];
+        const same = JSON.stringify(value ?? null) === JSON.stringify(was ?? null)
+          || (key === 'images' && Array.isArray(value) && value.length === 0 && was == null);
+        if (!same) { fields[key] = value; before[key] = was ?? null; }
+      }
+      if (!Object.keys(fields).length) {
+        if (row.pendingRevision) { row.pendingRevision = null; row.updatedAt = now; audit(state, user, 'product', row.id, 'product_revision_withdrawn', `${row.name}修改与线上版本相同，撤回待审核修订`); }
+        return row;
+      }
+      row.pendingRevision = { fields, before, submittedAt: now, submittedBy: user.id, submittedByName: user.name || '' };
+      row.updatedAt = now;
+      audit(state, user, 'product', row.id, 'product_revision_submitted', `${row.name}提交修改审核（${Object.keys(fields).join('、')}），线上版本保持不变`);
+      return row;
+    }
+    const keepApproved = adminApprove || (isPlatformAdmin && row.status === 'approved');
     Object.assign(row, normalized, {
       sku: normalized.sku || row.sku,
       imageIsTest: Boolean(input.imageIsTest),
@@ -623,6 +664,28 @@ export function reviewBrandProduct(user: SessionUser, id: number, decision: 'app
     const now = new Date().toISOString();
     Object.assign(row, { status: decision, reviewStatus: decision, reviewNote: note.trim(), reviewedAt: now, reviewedBy: user.id, isActive: decision === 'approved', salesStatus: decision === 'approved' ? (row.stockQuantity > 0 ? 'active' : 'sold_out') : 'draft', updatedAt: now });
     audit(state, user, 'product', row.id, decision === 'approved' ? 'product_approved' : 'product_rejected', note.trim() || '审核通过并上架');
+    return row;
+  });
+}
+
+export function reviewBrandProductRevision(user: SessionUser, id: number, decision: 'approved' | 'rejected', note: string) {
+  if (!hasPlatformAdminAccess(user)) throw new Error('仅平台账号可审核商品修改');
+  return withWrite((state) => {
+    const row = state.products.find((product) => product.id === id);
+    if (!row) throw new Error('找不到商品');
+    const revision = row.pendingRevision;
+    if (!revision || !revision.fields || !Object.keys(revision.fields).length) throw new Error('该商品没有待审核的修改，请刷新后再操作');
+    if (decision === 'rejected' && !note.trim()) throw new Error('驳回修改时必须填写原因');
+    const now = new Date().toISOString();
+    const changed = Object.keys(revision.fields);
+    if (decision === 'approved') {
+      Object.assign(row, revision.fields);
+      if (row.isActive && row.status === 'approved') row.salesStatus = row.stockQuantity > 0 ? 'active' : 'sold_out';
+    }
+    row.pendingRevision = null;
+    row.lastRevisionReview = { decision, note: note.trim(), reviewedAt: now, reviewedBy: user.id };
+    row.updatedAt = now;
+    audit(state, user, 'product', row.id, decision === 'approved' ? 'product_revision_approved' : 'product_revision_rejected', decision === 'approved' ? `${row.name}修改审核通过并套用（${changed.join('、')}）` : `${row.name}修改被驳回：${note.trim()}`);
     return row;
   });
 }

@@ -88,7 +88,10 @@ export async function PUT(
         productId: updated.id,
         reviewStatus: updated.reviewStatus,
         product: updated,
-        message: updated.status === 'approved' ? '商品修改已立即生效并同步至商城！' : '商品资料已更新并提交审核。',
+        revisionPending: Boolean(updated.pendingRevision),
+        message: updated.pendingRevision
+          ? '修改已提交平台审核；审核通过前商城继续显示当前上架版本。'
+          : updated.status === 'approved' ? '商品修改已立即生效并同步至商城！' : '商品资料已更新并提交审核。',
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : '补件提交失败';

@@ -5,7 +5,7 @@ import { outboundNotifications, products } from '@/lib/schema';
 import { eq, desc } from 'drizzle-orm';
 import { getFreshSessionUser, requireAdmin } from '@/lib/auth';
 import { getVendorProductEditUrl } from '@/lib/vendor-product-review';
-import { listBrandProducts, reviewBrandProduct } from '@/lib/local-cn-brand-marketplace';
+import { listBrandProducts, reviewBrandProduct, reviewBrandProductRevision, type LocalCnBrandProduct } from '@/lib/local-cn-brand-marketplace';
 import { brandPilotDbEnabled, listDbBrandProducts, reviewDbBrandProduct } from '@/lib/brand-pilot-db';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +16,34 @@ function toProductDto(product: typeof products.$inferSelect) {
     ...product,
     imageUrl: typeof images[0] === 'string' ? images[0] : null,
     priceCny: null,
+  };
+}
+
+const REVISION_FIELD_LABELS: Record<string, string> = {
+  name: '商品名称', category: '分类', description: '商品说明', imageUrl: '封面图', images: '商品图集', sku: 'SKU',
+  compareAtPrice: '划线价', variants: '规格', shippingMethods: '配送方式', fulfillmentInfo: '发货说明',
+  priceCny: '售价', priceTwd: '售价(TWD)', supplyPriceCny: '品牌结算价', stockQuantity: '库存',
+  directRate: '直接推荐分润%', upperRate: '上层推荐分润%', activeRate: '销售贡献榜分润%', imageIsTest: '参考图标记', imageDisclosure: '图片说明',
+};
+
+function revisionSummary(product: LocalCnBrandProduct) {
+  const revision = product.pendingRevision;
+  if (!revision || !revision.fields || !Object.keys(revision.fields).length) return null;
+  const show = (value: unknown) => {
+    if (value == null || value === '') return '（空）';
+    if (Array.isArray(value)) return value.map((item) => (item && typeof item === 'object' ? `${(item as any).name}: ${((item as any).values || []).join('/')}` : String(item))).join('，') || '（空）';
+    return String(value);
+  };
+  return {
+    submittedAt: revision.submittedAt,
+    submittedBy: revision.submittedBy,
+    submittedByName: revision.submittedByName || '',
+    changes: Object.keys(revision.fields).filter((key) => key !== 'priceTwd').map((key) => ({
+      key,
+      label: REVISION_FIELD_LABELS[key] || key,
+      before: show(revision.before?.[key]),
+      after: show(revision.fields[key]),
+    })),
   };
 }
 
@@ -44,6 +72,7 @@ export async function GET(request: NextRequest) {
     if (!process.env.DATABASE_URL) {
       return NextResponse.json(listBrandProducts(reviewer!, 'review').map((product) => ({
         ...product,
+        pendingRevision: revisionSummary(product),
         editUrl: product.reviewStatus === 'rejected' ? `/vendor/products/${product.id}/edit` : null,
       })));
     }
@@ -106,6 +135,17 @@ export async function PUT(request: NextRequest) {
     const { id, ...data } = body;
     if (!id) {
       return NextResponse.json({ error: 'Product ID is required' }, { status: 400 });
+    }
+    if (!process.env.DATABASE_URL && data.revisionDecision) {
+      // 审核已上架商品的待审核修改：通过则套用，驳回则丢弃（线上版本不变）
+      const revisionDecision = String(data.revisionDecision || '') as 'approved' | 'rejected';
+      if (!['approved', 'rejected'].includes(revisionDecision)) return NextResponse.json({ error: '请选择通过或驳回修改' }, { status: 400 });
+      try {
+        const updated = reviewBrandProductRevision(reviewer!, Number(id), revisionDecision, String(data.reviewNote || ''));
+        return NextResponse.json({ ...updated, pendingRevision: null, editUrl: null });
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : '审核修改失败' }, { status: 400 });
+      }
     }
     if (!process.env.DATABASE_URL) {
       const decision = String(data.reviewStatus || '') as 'approved' | 'rejected';
