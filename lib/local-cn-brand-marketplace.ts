@@ -524,7 +524,8 @@ export function createBrandProduct(user: SessionUser, input: Record<string, unkn
     if (!brand && !['admin', 'editor'].includes(getOrganizationRole('brand', accessibleBrand.id, user.id) || '')) throw new Error('当前职位无权提交商品');
     const defaults = normalizeBrandCommissionDefaults(accessibleBrand.commissionDefaults);
     const normalized = ensureProductInput({ ...defaults, ...input });
-    const autoApprove = Boolean(input.autoApprove);
+    // 只有平台管理员可以直接上架；其他账号一律送审（忽略客户端传入的 autoApprove）
+    const autoApprove = Boolean(input.autoApprove) && hasPlatformAdminAccess(user);
     const duplicate = state.products.find((row) => row.brandId === accessibleBrand.id && row.name.toLowerCase() === normalized.name.toLowerCase() && row.status === 'pending');
     if (duplicate && !autoApprove) throw new Error('同名商品正在审核，请勿重复提交');
     const now = new Date().toISOString();
@@ -586,10 +587,12 @@ export function updateBrandProduct(user: SessionUser, id: number, action: 'resub
       audit(state, user, 'product', row.id, row.isActive ? 'product_activated' : 'product_deactivated', row.name);
       return row;
     }
-    const allowAnyStatus = action === 'edit' || Boolean(input.allowAnyStatus || input.autoApprove);
+    // 只有平台管理员可以把商品直接改为上架；其他账号的 autoApprove 一律忽略
+    const adminApprove = Boolean(input.autoApprove) && hasPlatformAdminAccess(user);
+    const allowAnyStatus = action === 'edit' || Boolean(input.allowAnyStatus || adminApprove);
     if (row.status !== 'rejected' && !allowAnyStatus) throw new Error('只有被退回的商品可以补充后重新提交');
     const normalized = ensureProductInput(input);
-    const keepApproved = Boolean(input.autoApprove) || (allowAnyStatus && row.status === 'approved');
+    const keepApproved = adminApprove || (allowAnyStatus && row.status === 'approved');
     Object.assign(row, normalized, {
       sku: normalized.sku || row.sku,
       imageIsTest: Boolean(input.imageIsTest),

@@ -478,9 +478,11 @@ export async function POST(request: NextRequest) {
         mode,
         draft,
         product: publishedProduct,
-        autoPublished: Boolean(publishedProduct),
+        autoPublished: publishedProduct?.status === 'approved',
         agentReply: publishedProduct
-          ? `🚀 AI Agent 已为您生成并直接上架「${publishedProduct.name}」（售价 ¥${publishedProduct.priceCny}），现已同步至商城与您的品牌馆！`
+          ? publishedProduct.status === 'approved'
+            ? `🚀 AI Agent 已为您生成并直接上架「${publishedProduct.name}」（售价 ¥${publishedProduct.priceCny}），现已同步至商城与您的品牌馆！`
+            : `✅ AI Agent 已生成「${publishedProduct.name}」（售价 ¥${publishedProduct.priceCny}）并提交平台审核，审核通过后自动上架。`
           : agentReply,
       });
     }

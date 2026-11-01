@@ -7,7 +7,7 @@ import {
   parseSupplierInfo,
   verifyVendorProductToken,
 } from '@/lib/vendor-product-review';
-import { getRequestSession } from '@/lib/auth';
+import { getFreshSessionUser, getRequestSession, hasPlatformAdminAccess } from '@/lib/auth';
 import { listBrandProducts, updateBrandProduct } from '@/lib/local-cn-brand-marketplace';
 
 export const dynamic = 'force-dynamic';
@@ -74,13 +74,15 @@ export async function PUT(
   const token = request.nextUrl.searchParams.get('token');
 
   if (!process.env.DATABASE_URL) {
-    const user = getRequestSession(request);
+    const user = await getFreshSessionUser(request).catch(() => null);
     if (!user) return NextResponse.json({ message: '请先登录品牌工作台' }, { status: 401 });
     try {
       const current = listBrandProducts(user, 'mine').find((row) => row.id === productId);
       if (!current) return NextResponse.json({ message: '找不到商品或无权修改' }, { status: 404 });
-      const body = await request.json();
-      const autoApprove = body.autoApprove !== undefined ? Boolean(body.autoApprove) : current.status === 'approved';
+      const rawBody = await request.json();
+      // 忽略客户端 autoApprove：仅平台管理员可直接上架，其他账号沿用原审核状态（待审核仍为待审核）
+      const { autoApprove: _clientAutoApprove, ...body } = (rawBody && typeof rawBody === 'object' ? rawBody : {}) as Record<string, any>;
+      const autoApprove = hasPlatformAdminAccess(user);
       const updated = updateBrandProduct(user, productId, 'edit', { ...current, ...body, allowAnyStatus: true, autoApprove, priceCny: body.priceCny ?? body.priceTwd ?? current.priceCny });
       return NextResponse.json({
         productId: updated.id,

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { products } from '@/lib/schema';
 import { desc, eq, ilike, or } from 'drizzle-orm';
-import { getFreshSessionUser } from '@/lib/auth';
+import { getFreshSessionUser, hasPlatformAdminAccess } from '@/lib/auth';
 import { getVendorProductEditUrl } from '@/lib/vendor-product-review';
 import { createBrandProduct, getApprovedBrandForUser, listBrandApplications, listBrandProducts } from '@/lib/local-cn-brand-marketplace';
 import {
@@ -91,7 +91,9 @@ export async function POST(request: NextRequest) {
 
     if (!brandPilotDbEnabled()) {
       try {
-        const product = createBrandProduct(user, body);
+        // 忽略客户端 autoApprove：仅平台管理员直接上架，其他账号一律待审核
+        const { autoApprove: _clientAutoApprove, ...input } = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+        const product = createBrandProduct(user, { ...input, autoApprove: hasPlatformAdminAccess(user) });
         return NextResponse.json({ productId: product.id, reviewStatus: product.reviewStatus, product, editUrl: null }, { status: 201 });
       } catch (error) {
         const message = error instanceof Error ? error.message : '商品提交审核失败';
