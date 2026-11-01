@@ -11,7 +11,9 @@ export default function ApprovedBrandFrontPage({ params }: { params: { slug: str
   if (!brand) notFound();
   const page = getBrandPageRecord(brand);
   if (!page.published || page.status !== 'published') notFound();
-  const products = listPublicBrandProducts().filter((product) => product.brandId === brand.id);
+  // Only pass display fields to the client renderer; supply price / commission rates must never reach the public RSC payload.
+  const products = listPublicBrandProducts().filter((product) => product.brandId === brand.id)
+    .map(({ id, name, category, description, imageUrl, priceCny, compareAtPrice, stockQuantity, createdAt }) => ({ id, name, category, description, imageUrl, priceCny, compareAtPrice, stockQuantity, createdAt }));
 
   return <main className="min-h-screen bg-[#e9ece8] text-stone-950">
     <header className="sticky top-0 z-40 border-b border-stone-200 bg-white/95 backdrop-blur">
