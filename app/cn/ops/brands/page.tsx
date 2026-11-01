@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import BrandDocumentReview from '@/components/BrandDocumentReview';
+import BrandClaimAdminPanel from '@/components/BrandClaimAdminPanel';
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, Check, ClipboardCheck, ExternalLink, X } from 'lucide-react';
 import {
@@ -305,6 +306,8 @@ export default function BrandReviewPage() {
             </div>
           ) : null}
         </section>
+
+        <BrandClaimAdminPanel brands={applications} onChanged={() => void load()} />
 
         <section id="brand-review" className="mt-6 scroll-mt-4">
           <div className="mb-3 flex items-center justify-between"><h2 className="text-xl font-black">品牌申请</h2><span className="text-sm text-slate-500">待审 {applications.filter((row) => row.status === 'pending').length}</span></div>

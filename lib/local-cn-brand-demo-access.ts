@@ -540,3 +540,20 @@ export function toDemoSessionUser(user: LocalCnUser): SessionUser {
     demoAccount: false,
   };
 }
+
+// 品牌认领：品牌移交给真实微信会员后，撤销原品牌测试会员仍可使用的登录链接／登录码（只改状态，不删除纪录）
+export function revokeBrandPilotAccessForMember(actorId: number, memberId: number, brandId: number) {
+  const id = Number(memberId);
+  if (!Number.isFinite(id) || id <= 0) return { revoked: 0 };
+  return withWrite((state) => {
+    let revoked = 0;
+    for (const row of state.challenges) {
+      if (row.memberId === id && (row.status === 'active' || row.status === 'pending')) {
+        row.status = 'revoked';
+        revoked += 1;
+        audit(state, { action: row.persistentAccess ? 'access_link.revoked' : 'challenge.revoked', actorId, challengeId: row.id, memberId: id, brandId, detail: '品牌已由真实微信会员认领，自动撤销原测试会员登录' });
+      }
+    }
+    return { revoked };
+  });
+}

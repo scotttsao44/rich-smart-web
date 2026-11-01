@@ -178,6 +178,9 @@ export default function VendorDashboardPage() {
                 <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-black text-emerald-900">
                   {brand.status === 'approved' ? '✓ 已核准开通' : brand.status === 'rejected' ? '已退回' : '待审核'}
                 </span>
+                <Link href="/cn/brand/entity" className="rounded-lg border border-stone-300 bg-white px-3 py-1 text-sm font-black text-stone-700 hover:bg-stone-50">
+                  变更公司主体
+                </Link>
                 <Link href={`/cn/brands/${brand.id}`} className="rounded-lg border border-teal-700 bg-teal-50 px-3 py-1 text-sm font-black text-teal-800 hover:bg-teal-100">
                   查看品牌馆前台 →
                 </Link>
