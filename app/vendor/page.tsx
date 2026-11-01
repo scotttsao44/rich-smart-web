@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Brain, CheckCircle2, Clock3, Edit3, PackagePlus, Sparkles, Store, XCircle, Zap } from 'lucide-react';
+import ProductLeadList from '@/components/ProductLeadList';
 
 type VendorProduct = {
   id: number;
@@ -16,6 +17,7 @@ type VendorProduct = {
   salesStatus: 'active' | 'paused';
   rejectionReason: string;
   editUrl: string | null;
+  listingType?: string | null;
 };
 
 type BrandSummary = {
@@ -41,6 +43,7 @@ export default function VendorDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [quickPrompt, setQuickPrompt] = useState('');
   const [quickPublishing, setQuickPublishing] = useState(false);
+  const [application, setApplication] = useState<{ status?: string; brandName?: string } | null>(null);
 
   const loadData = () => {
     setLoading(true);
@@ -54,6 +57,7 @@ export default function VendorDashboardPage() {
         if (!res.ok) throw new Error(data.error || '读取品牌工作台失败');
         setBrand(data.brand || null);
         setProducts(data.products || []);
+        setApplication(Array.isArray(data.applications) && data.applications[0] ? data.applications[0] : null);
       })
       .catch((error) => setMessage(error.message))
       .finally(() => setLoading(false));
@@ -61,7 +65,7 @@ export default function VendorDashboardPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('submitted') === 'approved') setMessage('🎉 商品已通过 AI Agent 极速上架并同步至商城！');
+    if (params.get('submitted') === 'approved') setMessage('商品已上架商城。');
     else if (params.get('submitted') === '1') setMessage('商品已提交平台审核。');
     if (params.get('resubmitted') === '1') setMessage('商品资料已更新。');
     loadData();
@@ -82,12 +86,12 @@ export default function VendorDashboardPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'AI 一键上架失败');
-      setMessage(data.agentReply || '🚀 AI Agent 已为您一键生成并上架商品！');
+      if (!res.ok) throw new Error(data.error || 'AI 生成失败');
+      setMessage(data.agentReply || '商品已生成并提交平台审核。');
       setQuickPrompt('');
       loadData();
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'AI 一键上架失败');
+      setMessage(err instanceof Error ? err.message : 'AI 生成失败');
     } finally {
       setQuickPublishing(false);
     }
@@ -106,7 +110,7 @@ export default function VendorDashboardPage() {
               分润与订单中心
             </Link>
             <Link href="/vendor/products/new" className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-black text-white shadow hover:bg-teal-800">
-              <PackagePlus className="h-4 w-4" />✨ AI 新增商品
+              <PackagePlus className="h-4 w-4" />新增商品
             </Link>
           </div>
         </div>
@@ -114,8 +118,8 @@ export default function VendorDashboardPage() {
         <div className="mt-6 flex items-center gap-3">
           <Store className="h-9 w-9 text-teal-700" />
           <div>
-            <h1 className="text-3xl font-black">品牌工作台 · AI Agent 极简一舱通</h1>
-            <p className="text-sm font-semibold text-stone-600">管理品牌主体、一句话 AI 秒上架商品、随时用 AI 对话改价改卖点。</p>
+            <h1 className="text-3xl font-black">品牌工作台</h1>
+            <p className="text-sm font-semibold text-stone-600">管理品牌资料与商品；商品提交后由平台审核，通过后上架商城。</p>
           </div>
         </div>
 
@@ -128,21 +132,20 @@ export default function VendorDashboardPage() {
               <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400 text-stone-950"><Brain className="h-5 w-5" /></span>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-lg font-black">阿富 AI 商品 Agent 大脑 · 一句话直接上架</h2>
-                  <span className="rounded-full bg-amber-400/20 px-2.5 py-0.5 text-xs font-black text-amber-300">零填表 · 3秒上架商城</span>
+                  <h2 className="text-lg font-black">AI 商品助手 · 一句话生成商品</h2>
                 </div>
-                <p className="text-xs font-semibold text-teal-100/80">说出一句话（品名 + 售价 + 供货结算价 + 卖点），Agent 自动算好 30%/5%/65% 分润并直接上架商城！</p>
+                <p className="text-xs font-semibold text-teal-100/80">说出品名、售价、结算价与卖点，AI 生成商品资料并提交平台审核。未提供的内容请到编辑页核对补充。</p>
               </div>
             </div>
             <Link href="/vendor/products/new" className="rounded-xl border border-white/30 bg-white/10 px-3.5 py-2 text-xs font-black text-white hover:bg-white/20">
-              打开完整 AI 商品工作台 →
+              打开完整商品表单 →
             </Link>
           </div>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input
               value={quickPrompt}
               onChange={(e) => setQuickPrompt(e.target.value)}
-              placeholder="例如：上架「富智慧频率密码健康仪（三段能量系统）」，售价 39800，结算价 23800，主打700uT旋磁与8-14微米体感光波..."
+              placeholder="例如：「某某健康仪」，售价 3980，结算价 2380，主要卖点……"
               className="flex-1 rounded-xl border border-teal-500/40 bg-black/30 px-4 py-2.5 text-sm font-semibold text-white placeholder-teal-200/50 outline-none focus:border-amber-400"
             />
             <button
@@ -152,7 +155,7 @@ export default function VendorDashboardPage() {
               className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-amber-400 px-5 py-2.5 text-sm font-black text-stone-950 shadow hover:bg-amber-300 disabled:opacity-50"
             >
               <Zap className="h-4 w-4" />
-              {quickPublishing ? 'AI 上架中...' : '🚀 一键生成并上架'}
+              {quickPublishing ? 'AI 生成中...' : '生成并提交审核'}
             </button>
           </div>
         </section>
@@ -161,9 +164,18 @@ export default function VendorDashboardPage() {
 
         {!loading && !brand ? (
           <section className="mt-6 rounded-lg border border-stone-200 bg-white p-6">
-            <h2 className="text-xl font-black">尚未开通品牌入驻</h2>
-            <p className="mt-2 text-sm text-stone-600">使用 AI Agent 招商大脑，一句话或上传一张营业执照即可 3 秒开通品牌工作台。</p>
-            <Link href="/cn/brand/apply" className="mt-4 inline-flex rounded-lg bg-teal-700 px-4 py-2 font-bold text-white">前往 AI 极速品牌入驻</Link>
+            {application?.status === 'pending' ? (
+              <>
+                <h2 className="text-xl font-black">品牌申请审核中</h2>
+                <p className="mt-2 text-sm text-stone-600">「{application.brandName || '品牌'}」已提交，平台审核通过后即可提交商品。审核期间可先准备商品图片与资料。</p>
+              </>
+            ) : (
+              <>
+                <h2 className="text-xl font-black">尚未开通品牌入驻</h2>
+                <p className="mt-2 text-sm text-stone-600">提交品牌入驻申请（上传营业执照等资料），平台审核通过后开通品牌工作台。</p>
+                <Link href="/cn/brand/apply" className="mt-4 inline-flex rounded-lg bg-teal-700 px-4 py-2 font-bold text-white">前往品牌入驻</Link>
+              </>
+            )}
           </section>
         ) : null}
 
@@ -193,7 +205,7 @@ export default function VendorDashboardPage() {
 
         <section className="mt-6 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-black">品牌商品列表（共 {products.length} 款 · 支持随时 AI 对话改价改文）</h2>
+            <h2 className="text-xl font-black">品牌商品列表（共 {products.length} 款）</h2>
             <Link href="/vendor/products/new" className="text-sm font-black text-teal-700 hover:underline">+ 新增商品</Link>
           </div>
           {products.map((product) => {
@@ -205,9 +217,13 @@ export default function VendorDashboardPage() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h3 className="text-lg font-black">{product.name}</h3>
+                    {product.listingType === 'shared_device' ? (
+                      <p className="mt-1 text-sm font-semibold text-stone-600">分类：{product.category} · <span className="font-black text-teal-800">共享设备 · 投放合作</span></p>
+                    ) : (
                     <p className="mt-1 text-sm font-semibold text-stone-600">
                       分类：{product.category} · 零售价：<span className="font-black text-stone-950">¥{product.priceCny.toLocaleString()}</span> · 品牌结算价：<span className="font-black text-teal-800">¥{product.supplyPriceCny.toLocaleString()}</span> · 库存：{product.stockQuantity}
                     </p>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={`inline-flex items-center gap-1 rounded-lg border px-3 py-1 text-xs font-black ${status.className}`}>
@@ -218,7 +234,7 @@ export default function VendorDashboardPage() {
                       className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-1.5 text-xs font-black text-white shadow-sm hover:bg-teal-800"
                     >
                       <Edit3 className="h-3.5 w-3.5" />
-                      ✨ AI 编辑 / 改价改文
+                      编辑
                     </Link>
                   </div>
                 </div>
@@ -232,10 +248,12 @@ export default function VendorDashboardPage() {
           })}
           {!loading && products.length === 0 ? (
             <div className="rounded-xl border border-stone-200 bg-white p-6 text-sm font-semibold text-stone-600">
-              尚未建立商品，可在上方输入框用一句话让 AI Agent 直接生成并上架！
+              尚未建立商品，点击「新增商品」填写资料并提交平台审核。
             </div>
           ) : null}
         </section>
+
+        {brand ? <ProductLeadList scope="brand" title="投放合作留资" /> : null}
       </div>
     </main>
   );

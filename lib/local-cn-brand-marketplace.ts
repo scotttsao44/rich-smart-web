@@ -115,6 +115,9 @@ export type LocalCnBrandProduct = {
   variants?: Array<{ name: string; values: string[] }>;
   shippingMethods?: string[];
   salesStatus?: 'draft' | 'active' | 'sold_out' | 'archived';
+  /** 'shared_device' = 共享设备（投放合作，不标价、不可下单，留资料洽谈）；缺省/null = 零售商品 */
+  listingType?: 'retail' | 'shared_device' | null;
+  cooperationNote?: string | null;
   imageIsTest: boolean;
   imageDisclosure: string;
   priceCny: string;
@@ -318,7 +321,16 @@ function ensureBrandInput(input: Record<string, unknown>) {
   };
 }
 
+export function isSharedDeviceProduct(row: { listingType?: unknown } | null | undefined) {
+  return row?.listingType === 'shared_device';
+}
+
+function liveSalesStatus(row: { listingType?: unknown; stockQuantity: number }): 'active' | 'sold_out' {
+  return isSharedDeviceProduct(row) || row.stockQuantity > 0 ? 'active' : 'sold_out';
+}
+
 function ensureProductInput(input: Record<string, unknown>) {
+  const shared = input.listingType === 'shared_device';
   const name = text(input.name);
   const category = text(input.category);
   const description = text(input.description);
@@ -342,6 +354,20 @@ function ensureProductInput(input: Record<string, unknown>) {
   const directRate = Number(input.directRate ?? 30);
   const upperRate = Number(input.upperRate ?? 5);
   const activeRate = Number(input.activeRate ?? 65);
+  if (shared) {
+    if (!name || !category || !description) throw new Error('请完整填写商品名称、分类和说明');
+    if ([directRate, upperRate, activeRate].some((rate) => !Number.isFinite(rate) || rate < 0 || rate > 100)) throw new Error('三段分润比例必须介于 0% 至 100%');
+    if (Math.abs(directRate + upperRate + activeRate - 100) > 0.001) throw new Error('直接推荐、上层推荐与近30天销售贡献榜比例合计必须等于 100%');
+    if (images.some((url) => /^data:/i.test(url))) throw new Error('商品图片不可使用浏览器 data URL，请先上传为持久图片');
+    if (imageUrl && !imageUrl.startsWith('/') && !/^https?:\/\//.test(imageUrl)) throw new Error('商品图片必须是有效网址或站内路径');
+    if (images.some((url) => !url.startsWith('/') && !/^https?:\/\//.test(url))) throw new Error('商品图片必须是有效网址或站内路径');
+    const cooperationNote = text(input.cooperationNote).slice(0, 500);
+    return {
+      name, category, description, imageUrl, images, sku, compareAtPrice: null, variants, shippingMethods: [] as string[],
+      fulfillmentInfo: '投放合作，留资料洽谈', priceCny: '0.00', supplyPriceCny: 0, stockQuantity: 0, directRate, upperRate, activeRate,
+      listingType: 'shared_device' as const, cooperationNote: cooperationNote || null,
+    };
+  }
   if (!name || !category || !description || !fulfillmentInfo) throw new Error('请完整填写商品名称、分类、说明和发货方式');
   if (!Number.isFinite(priceCny) || priceCny <= 0) throw new Error('商品售价必须大于 0');
   if (compareAtPrice != null && (!Number.isFinite(compareAtPrice) || compareAtPrice <= priceCny)) throw new Error('划线价必须高于商品售价');
@@ -353,7 +379,13 @@ function ensureProductInput(input: Record<string, unknown>) {
   if (images.some((url) => /^data:/i.test(url))) throw new Error('商品图片不可使用浏览器 data URL，请先上传为持久图片');
   if (imageUrl && !imageUrl.startsWith('/') && !/^https?:\/\//.test(imageUrl)) throw new Error('商品图片必须是有效网址或站内路径');
   if (images.some((url) => !url.startsWith('/') && !/^https?:\/\//.test(url))) throw new Error('商品图片必须是有效网址或站内路径');
-  return { name, category, description, imageUrl, images, sku, compareAtPrice, variants, shippingMethods: shippingMethods.length ? shippingMethods : [fulfillmentInfo], fulfillmentInfo, priceCny: priceCny.toFixed(2), supplyPriceCny, stockQuantity, directRate, upperRate, activeRate };
+  return { name, category, description, imageUrl, images, sku, compareAtPrice, variants, shippingMethods: shippingMethods.length ? shippingMethods : [fulfillmentInfo], fulfillmentInfo, priceCny: priceCny.toFixed(2), supplyPriceCny, stockQuantity, directRate, upperRate, activeRate, listingType: null, cooperationNote: null };
+}
+
+// 品牌申请（任何状态）的所属品牌；供审核前上传商品/品牌图片使用
+export function getOwnBrandApplicationForUser(userId: number) {
+  const brands = readState().brands.filter((row) => row.applicantUserId === userId || row.accountUserId === userId);
+  return brands.find((row) => row.status === 'approved') || brands.find((row) => row.status === 'pending') || brands[0] || null;
 }
 
 export function listApprovedBrands() {
@@ -508,7 +540,7 @@ export function listPublicBrandProducts() {
     && row.reviewStatus === 'approved'
     && row.isActive
     && row.salesStatus === 'active'
-    && row.stockQuantity > 0
+    && (isSharedDeviceProduct(row) || row.stockQuantity > 0)
     && approvedBrands.has(row.brandId)
     && !isPlaceholderProduct(row))
     .map(({ pendingRevision: _pendingRevision, lastRevisionReview: _lastRevisionReview, ...row }) => row as LocalCnBrandProduct);
@@ -547,9 +579,9 @@ export function createBrandProduct(user: SessionUser, input: Record<string, unkn
     const row: LocalCnBrandProduct = duplicate || {
       id, slug: slugify(normalized.name), brandId: accessibleBrand.id, brandName: accessibleBrand.brandName, ownerUserId: user.id,
       ...normalized, sku: normalized.sku || `BR-${accessibleBrand.id}-${id}`, imageIsTest: Boolean(input.imageIsTest), imageDisclosure: Boolean(input.imageIsTest) ? '商品参考图' : '',
-      priceTwd: normalized.priceCny, commissionRate: text(input.commissionRate || normalized.directRate), status: finalStatus, reviewStatus: finalStatus, reviewNote: autoApprove ? 'AI Agent 智能合规核验通过并上架' : '',
+      priceTwd: normalized.priceCny, commissionRate: text(input.commissionRate || normalized.directRate), status: finalStatus, reviewStatus: finalStatus, reviewNote: autoApprove ? '平台管理员直接上架' : '',
       supplyPriceCny: normalized.supplyPriceCny,
-      submittedAt: now, reviewedAt: autoApprove ? now : null, reviewedBy: autoApprove ? user.id : null, isActive: autoApprove, salesStatus: autoApprove ? (normalized.stockQuantity > 0 ? 'active' : 'sold_out') : 'draft', createdAt: now, updatedAt: now,
+      submittedAt: now, reviewedAt: autoApprove ? now : null, reviewedBy: autoApprove ? user.id : null, isActive: autoApprove, salesStatus: autoApprove ? liveSalesStatus(normalized) : 'draft', createdAt: now, updatedAt: now,
     };
     if (duplicate) {
       Object.assign(row, normalized, {
@@ -558,17 +590,17 @@ export function createBrandProduct(user: SessionUser, input: Record<string, unkn
         commissionRate: text(input.commissionRate || normalized.directRate),
         status: finalStatus,
         reviewStatus: finalStatus,
-        reviewNote: autoApprove ? 'AI Agent 智能合规核验通过并上架' : '',
+        reviewNote: autoApprove ? '平台管理员直接上架' : '',
         reviewedAt: autoApprove ? now : null,
         reviewedBy: autoApprove ? user.id : null,
         isActive: autoApprove,
-        salesStatus: autoApprove ? (normalized.stockQuantity > 0 ? 'active' : 'sold_out') : 'draft',
+        salesStatus: autoApprove ? liveSalesStatus(normalized) : 'draft',
         updatedAt: now,
       });
     } else {
       state.products.unshift(row);
     }
-    audit(state, user, 'product', row.id, autoApprove ? 'product_approved' : 'product_submitted', autoApprove ? `${accessibleBrand.brandName}通过 AI Agent 一键上架商品「${row.name}」` : `${accessibleBrand.brandName}提交商品「${row.name}」审核`);
+    audit(state, user, 'product', row.id, autoApprove ? 'product_approved' : 'product_submitted', autoApprove ? `${accessibleBrand.brandName}由平台管理员直接上架商品「${row.name}」` : `${accessibleBrand.brandName}提交商品「${row.name}」审核`);
     return row;
   });
 }
@@ -595,7 +627,7 @@ export function updateBrandProduct(user: SessionUser, id: number, action: 'resub
     if (action === 'toggle') {
       if (row.status !== 'approved') throw new Error('只有审核通过的商品可以调整销售状态');
       row.isActive = Boolean(input.isActive);
-      row.salesStatus = row.isActive ? (row.stockQuantity > 0 ? 'active' : 'sold_out') : 'archived';
+      row.salesStatus = row.isActive ? liveSalesStatus(row) : 'archived';
       row.updatedAt = now;
       audit(state, user, 'product', row.id, row.isActive ? 'product_activated' : 'product_deactivated', row.name);
       return row;
@@ -641,12 +673,12 @@ export function updateBrandProduct(user: SessionUser, id: number, action: 'resub
       priceTwd: normalized.priceCny,
       status: keepApproved ? 'approved' : 'pending',
       reviewStatus: keepApproved ? 'approved' : 'pending',
-      reviewNote: keepApproved ? (row.reviewNote || 'AI Agent 智能合规核验通过并上架') : '',
+      reviewNote: keepApproved ? (row.reviewNote || '平台管理员直接上架') : '',
       submittedAt: now,
       reviewedAt: keepApproved ? (row.reviewedAt || now) : null,
       reviewedBy: keepApproved ? (row.reviewedBy || user.id) : null,
       isActive: keepApproved ? (row.isActive !== false) : false,
-      salesStatus: keepApproved ? (normalized.stockQuantity > 0 ? 'active' : 'sold_out') : 'draft',
+      salesStatus: keepApproved ? liveSalesStatus(normalized) : 'draft',
       updatedAt: now,
     });
     audit(state, user, 'product', row.id, keepApproved ? 'product_updated' : 'product_resubmitted', keepApproved ? `${row.name}通过编辑器更新并保持上架` : `${row.name}重新提交审核`);
@@ -662,7 +694,7 @@ export function reviewBrandProduct(user: SessionUser, id: number, decision: 'app
     if (row.status !== 'pending') throw new Error('该商品已处理，请刷新后再操作');
     if (decision === 'rejected' && !note.trim()) throw new Error('退回时必须填写原因');
     const now = new Date().toISOString();
-    Object.assign(row, { status: decision, reviewStatus: decision, reviewNote: note.trim(), reviewedAt: now, reviewedBy: user.id, isActive: decision === 'approved', salesStatus: decision === 'approved' ? (row.stockQuantity > 0 ? 'active' : 'sold_out') : 'draft', updatedAt: now });
+    Object.assign(row, { status: decision, reviewStatus: decision, reviewNote: note.trim(), reviewedAt: now, reviewedBy: user.id, isActive: decision === 'approved', salesStatus: decision === 'approved' ? liveSalesStatus(row) : 'draft', updatedAt: now });
     audit(state, user, 'product', row.id, decision === 'approved' ? 'product_approved' : 'product_rejected', note.trim() || '审核通过并上架');
     return row;
   });
@@ -680,7 +712,7 @@ export function reviewBrandProductRevision(user: SessionUser, id: number, decisi
     const changed = Object.keys(revision.fields);
     if (decision === 'approved') {
       Object.assign(row, revision.fields);
-      if (row.isActive && row.status === 'approved') row.salesStatus = row.stockQuantity > 0 ? 'active' : 'sold_out';
+      if (row.isActive && row.status === 'approved') row.salesStatus = liveSalesStatus(row);
     }
     row.pendingRevision = null;
     row.lastRevisionReview = { decision, note: note.trim(), reviewedAt: now, reviewedBy: user.id };

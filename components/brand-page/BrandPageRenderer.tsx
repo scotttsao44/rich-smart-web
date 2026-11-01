@@ -14,6 +14,7 @@ export type BrandPageProduct = {
   description?: string;
   imageUrl?: string;
   priceCny?: string | number;
+  listingType?: string | null;
   compareAtPrice?: string | number | null;
   stockQuantity?: number;
   createdAt?: string;
@@ -86,6 +87,7 @@ function ProductCards({ block, products, editable }: { block: BrandPageBlock; pr
   const sorted = [...selected].sort((a, b) => block.productSort === 'price_asc' ? Number(a.priceCny || 0) - Number(b.priceCny || 0) : block.productSort === 'price_desc' ? Number(b.priceCny || 0) - Number(a.priceCny || 0) : String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
   const add = (product: BrandPageProduct) => {
     if (editable) return;
+    if (product.listingType === 'shared_device') { router.push(`/cn/shop/${product.id}`); return; }
     addItem({ productId: product.id, name: product.name, price: Number(product.priceCny || 0), quantity: 1, imageUrl: product.imageUrl, currency: 'CNY', marketRegion: 'CN' });
     if (block.productAction === 'buy') router.push('/cn/cart');
   };
@@ -99,8 +101,8 @@ function ProductCards({ block, products, editable }: { block: BrandPageBlock; pr
         <div className="truncate text-[12px] font-bold uppercase" style={{ color: 'var(--brand-accent)' }}>{product.category || '品牌商品'}</div>
         <div className="mt-8 min-h-[48px] overflow-hidden text-[17px] font-extrabold leading-6 text-stone-900">{product.name}</div>
         <div className="mt-[12px] flex items-end justify-between gap-[8px]">
-          <div>{block.showPrice ? <div><div className="text-[21px] font-black text-red-700">{money(product.priceCny)}</div>{block.showDiscount && Number(product.compareAtPrice || 0) > Number(product.priceCny || 0) ? <div className="text-[11px] font-semibold text-stone-400 line-through">{money(product.compareAtPrice || 0)}</div> : null}</div> : null}{block.showStock ? <div className="mt-4 text-[11px] font-semibold text-stone-500">库存 {product.stockQuantity ?? 0}</div> : null}</div>
-          <button type="button" onClick={() => add(product)} aria-label={block.productAction === 'buy' ? '立即购买' : '加入购物车'} className="flex h-[36px] w-[36px] shrink-0 items-center justify-center bg-stone-950 text-white"><ShoppingCart size={17} /></button>
+          <div>{product.listingType === 'shared_device' ? <div className="text-[15px] font-black text-stone-900">投放合作 · 洽谈</div> : block.showPrice ? <div><div className="text-[21px] font-black text-red-700">{money(product.priceCny)}</div>{block.showDiscount && Number(product.compareAtPrice || 0) > Number(product.priceCny || 0) ? <div className="text-[11px] font-semibold text-stone-400 line-through">{money(product.compareAtPrice || 0)}</div> : null}</div> : null}{block.showStock && product.listingType !== 'shared_device' ? <div className="mt-4 text-[11px] font-semibold text-stone-500">库存 {product.stockQuantity ?? 0}</div> : null}</div>
+          {product.listingType === 'shared_device' ? <button type="button" onClick={() => add(product)} className="flex h-[36px] shrink-0 items-center justify-center bg-stone-950 px-3 text-[12px] font-black text-white">留资料洽谈</button> : <button type="button" onClick={() => add(product)} aria-label={block.productAction === 'buy' ? '立即购买' : '加入购物车'} className="flex h-[36px] w-[36px] shrink-0 items-center justify-center bg-stone-950 text-white"><ShoppingCart size={17} /></button>}
         </div>
       </div>
     </article>)}

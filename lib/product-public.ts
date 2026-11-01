@@ -18,6 +18,9 @@ export interface PublicProduct {
   sold?: number;
   rating?: string;
   tag?: string;
+  /** 'shared_device' = 共享设备（投放合作 · 洽谈，不标价、不可下单） */
+  listingType?: 'shared_device';
+  cooperationNote?: string;
 }
 
 export function normalizeProductImageUrl(value: unknown) {
@@ -64,6 +67,8 @@ export function toPublicProduct(product: {
   sold?: number | null;
   rating?: string | null;
   tag?: string | null;
+  listingType?: string | null;
+  cooperationNote?: string | null;
 }): PublicProduct {
   return {
     id: product.id,
@@ -85,5 +90,8 @@ export function toPublicProduct(product: {
     sold: product.sold ?? undefined,
     rating: product.rating || undefined,
     tag: product.tag || undefined,
+    ...(product.listingType === 'shared_device'
+      ? { listingType: 'shared_device' as const, cooperationNote: product.cooperationNote || undefined, priceCny: null, priceTwd: null }
+      : {}),
   };
 }

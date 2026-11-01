@@ -4,6 +4,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { useAuth } from '@/app/providers';
 import { useRouter } from 'next/navigation';
 import { Package, Plus, Pencil, Trash2, X } from 'lucide-react';
+import ProductLeadList from '@/components/ProductLeadList';
 
 interface Product {
   id: number;
@@ -20,6 +21,7 @@ interface Product {
   reviewStatus: string | null;
   reviewNote: string | null;
   editUrl?: string | null;
+  listingType?: string | null;
   pendingRevision?: {
     submittedAt: string;
     submittedByName?: string;
@@ -425,12 +427,12 @@ export default function AdminProducts() {
                   <Fragment key={product.id}>
                   <tr className="border-b border-gray-100 hover:bg-gray-50">
                     <td className="py-3 px-2 text-gray-500">{product.id}</td>
-                    <td className="py-3 px-2 font-medium text-gray-900">{product.name}</td>
+                    <td className="py-3 px-2 font-medium text-gray-900">{product.name}{product.listingType === 'shared_device' ? <span className="ml-1 rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-bold text-emerald-800">共享设备</span> : null}</td>
                     <td className="py-3 px-2 text-gray-700">{product.supplierName || '-'}</td>
                     <td className="py-3 px-2 text-right text-gray-700">{product.commissionRate || '0'}</td>
-                    <td className="py-3 px-2 text-right text-gray-700">{product.priceTwd || '-'}</td>
-                    <td className="py-3 px-2 text-right text-gray-700">{product.priceCny || '-'}</td>
-                    <td className="py-3 px-2 text-right text-gray-700">{product.stockQuantity ?? 0}</td>
+                    <td className="py-3 px-2 text-right text-gray-700">{product.listingType === 'shared_device' ? '-' : (product.priceTwd || '-')}</td>
+                    <td className="py-3 px-2 text-right text-gray-700">{product.listingType === 'shared_device' ? '投放合作' : (product.priceCny || '-')}</td>
+                    <td className="py-3 px-2 text-right text-gray-700">{product.listingType === 'shared_device' ? '-' : (product.stockQuantity ?? 0)}</td>
                     <td className="py-3 px-2">
                       {product.reviewStatus === 'approved' && product.isActive ? <span className="badge-green">审核通过 / 上架中</span> : null}
                       {product.reviewStatus === 'pending' ? <span className="badge-amber">待审核</span> : null}
@@ -508,6 +510,8 @@ export default function AdminProducts() {
           </div>
         )}
       </div>
+
+      <ProductLeadList scope="admin" title="投放合作留资（共享设备）" />
     </div>
   );
 }

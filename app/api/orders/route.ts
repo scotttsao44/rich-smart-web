@@ -186,6 +186,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ orderId: order.id, order });
   } catch (error) {
+    if (error instanceof Error && error.message.includes('共享设备投放合作')) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
     console.error('Failed to create order:', error);
     return NextResponse.json(
       { error: 'Failed to create order' },

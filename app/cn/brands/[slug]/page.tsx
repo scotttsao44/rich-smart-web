@@ -13,7 +13,7 @@ export default function ApprovedBrandFrontPage({ params }: { params: { slug: str
   if (!page.published || page.status !== 'published') notFound();
   // Only pass display fields to the client renderer; supply price / commission rates must never reach the public RSC payload.
   const products = listPublicBrandProducts().filter((product) => product.brandId === brand.id)
-    .map(({ id, name, category, description, imageUrl, priceCny, compareAtPrice, stockQuantity, createdAt }) => ({ id, name, category, description, imageUrl, priceCny, compareAtPrice, stockQuantity, createdAt }));
+    .map(({ id, name, category, description, imageUrl, priceCny, compareAtPrice, stockQuantity, createdAt, listingType }) => ({ id, name, category, description, imageUrl, priceCny, compareAtPrice, stockQuantity, createdAt, listingType: listingType === 'shared_device' ? 'shared_device' : null }));
 
   return <main className="min-h-screen bg-[#e9ece8] text-stone-950">
     <header className="sticky top-0 z-40 border-b border-stone-200 bg-white/95 backdrop-blur">

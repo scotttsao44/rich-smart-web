@@ -51,7 +51,12 @@ type Product = {
   imageIsTest?: boolean;
   category?: string;
   tag?: string;
+  listingType?: string;
 };
+
+function homePriceLabel(product: Product) {
+  return product.listingType === 'shared_device' ? '投放合作 · 洽谈' : formatCny(getCnyPrice(product));
+}
 
 type HealthRecord = {
   id?: string;
@@ -442,7 +447,7 @@ export default function ChinaMemberHomePage() {
                         <div className="text-xs font-black text-[var(--caomi-forest-700)]">{productShopCategory(product)}</div>
                         <h3 className="mt-2 line-clamp-2 min-h-[44px] font-black leading-6 text-stone-950">{product.name}</h3>
                         <p className="mt-2 line-clamp-2 min-h-[40px] text-xs font-semibold leading-5 text-stone-500">{product.description || '查看商品详情与履约说明。'}</p>
-                        <div className="mt-3 text-lg font-black text-red-600">{formatCny(getCnyPrice(product))}</div>
+                        <div className={`mt-3 font-black ${product.listingType === 'shared_device' ? 'text-base text-[var(--caomi-forest-900)]' : 'text-lg text-red-600'}`}>{homePriceLabel(product)}</div>
                       </div>
                     </Link>
                   </article>
@@ -546,7 +551,7 @@ export default function ChinaMemberHomePage() {
                     </div>
                     <div className="min-w-0">
                       <div className="truncate font-black text-stone-950">{product.name}</div>
-                      <div className="mt-1 text-xs font-bold text-stone-500">{productShopCategory(product)} · {formatCny(getCnyPrice(product))}</div>
+                      <div className="mt-1 text-xs font-bold text-stone-500">{productShopCategory(product)} · {homePriceLabel(product)}</div>
                     </div>
                   </div>
                 </Link>

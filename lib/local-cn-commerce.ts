@@ -802,6 +802,7 @@ export function createLocalCnOrder(body: any) {
       const productId = Number(input.productId);
       const product = productById(productId);
       if (!product) throw new Error(`商品 ${productId} 不存在`);
+      if ((product as { listingType?: unknown }).listingType === 'shared_device') throw new Error(`「${product.name}」为共享设备投放合作，不支持下单，请在商品页留资料洽谈`);
       const unitPrice = getCnyPrice(product);
       const quantity = Math.max(1, Number(input.quantity || 1));
       const requestedReferrerBrandId = Number(input.referrerBrandId || body.referrerBrandId || 0);

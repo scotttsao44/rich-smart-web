@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { detectSharedDeviceText, isSharedDeviceListing } from '@/lib/vendor-product-form-feedback';
 import { getFreshSessionUser, hasPlatformAdminAccess } from '@/lib/auth';
 import {
   createBrandProduct,
@@ -24,58 +25,12 @@ function cleanQuotes(val: unknown): string {
     .trim();
 }
 
-const USCC_CHARS = '0123456789ABCDEFGHJKLMNPQRTUWXY';
-const USCC_WEIGHTS = [1, 3, 9, 27, 19, 26, 16, 17, 20, 29, 25, 13, 8, 24, 10, 30, 28];
-
-function makeValidUscc(seed: string): string {
-  const hash = crypto.createHash('sha256').update(seed).digest();
-  let prefix = '91320507';
-  for (let i = 0; i < 9; i += 1) {
-    prefix += USCC_CHARS[hash[i] % USCC_CHARS.length];
-  }
-  let sum = 0;
-  for (let i = 0; i < 17; i += 1) {
-    sum += USCC_CHARS.indexOf(prefix[i]) * USCC_WEIGHTS[i];
-  }
-  const check = USCC_CHARS[(31 - (sum % 31)) % 31];
-  return `${prefix}${check}`;
-}
-
-function ensureUserLicenseDocument(userId: number, existingToken?: string, existingName?: string) {
-  const dir = brandDocumentDirectory();
-  const metaDir = path.join(dir, '.metadata');
-  mkdirSync(metaDir, { recursive: true });
-
-  if (existingToken && existsSync(path.join(dir, existingToken))) {
-    return {
-      token: existingToken,
-      name: existingName || '营业执照副本_AI核验.jpg',
-      kind: 'license' as const,
-    };
-  }
-
-  const token = `license-${userId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.pdf`;
-  const pdfBytes = Buffer.from(
-    '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>endobj\nxref\n0 4\n0000000000 65535 f \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n0\n%%EOF\n',
-    'utf8',
-  );
-  writeFileSync(path.join(dir, token), pdfBytes);
-  writeFileSync(
-    path.join(metaDir, `${token}.json`),
-    JSON.stringify({
-      token,
-      userId,
-      originalName: 'AI_Agent_营业执照快速存证.pdf',
-      uploadedAt: new Date().toISOString(),
-      verificationStatus: 'verified',
-    }),
-    'utf8',
-  );
-  return {
-    token,
-    name: 'AI_Agent_营业执照快速存证.pdf',
-    kind: 'license' as const,
-  };
+// 只使用申请人自己上传、且确实存在于服务器的营业执照；绝不自动生成或挂载文件
+function findUploadedLicenseDocument(existingToken?: string, existingName?: string) {
+  const token = String(existingToken || '').trim();
+  if (!token || token.includes('/') || token.includes('..')) return null;
+  if (!existsSync(path.join(brandDocumentDirectory(), token))) return null;
+  return { token, name: existingName || '营业执照', kind: 'license' as const };
 }
 
 function inferBrandTaxonomy(text: string): { majorId: string; minorId: string; categoryLabel: string } {
@@ -102,7 +57,7 @@ function inferBrandTaxonomy(text: string): { majorId: string; minorId: string; c
 
 function parseBrandPrompt(prompt: string, currentForm: Record<string, any> = {}, userName = '品牌负责人') {
   const raw = String(prompt || '').trim();
-  const isCaomiQuantum = /富智慧|频率密码|糙米量子|粽米量子|曹哲魁|91320507MAK1X15M90|ZL\s*2025/i.test(raw) || !raw;
+  const isCaomiQuantum = /富智慧|频率密码|糙米量子|粽米量子|曹哲魁|91320507MAK1X15M90|ZL\s*2025/i.test(raw);
 
   if (isCaomiQuantum) {
     const brandNameMatch = raw.match(/品牌(?:名称|名)?[：:\s]*([^\s，,。；;]{2,20})/);
@@ -121,9 +76,9 @@ function parseBrandPrompt(prompt: string, currentForm: Record<string, any> = {},
       establishmentDate: '2025-11-26',
       companyAddress: '苏州市相城区元和街道悟真路5号峰汇商务广场1幢207—7工位（集群登记）',
       businessScope: '一般项目：量子计算技术服务；技术服务、技术开发、技术咨询、技术交流、技术转让、技术推广；信息技术咨询服务；软件开发；计算机软硬件及辅助设备批发；计算机软硬件及辅助设备零售',
-      contactName: currentForm.contactName || '曹哲魁（曹先生）',
-      phone: currentForm.phone || '15862501498',
-      wechat: currentForm.wechat || 'CaomiQuantum',
+      contactName: currentForm.contactName || '',
+      phone: currentForm.phone || '',
+      wechat: currentForm.wechat || '',
       introduction:
         currentForm.introduction ||
         '【国家外观设计专利证书号第9675350号 · 专利号 ZL 2025 3 0195027.X】\n' +
@@ -145,39 +100,36 @@ function parseBrandPrompt(prompt: string, currentForm: Record<string, any> = {},
   const usccMatch = raw.match(/([159Y][1239][0-9]{6}[0-9A-HJ-NPQRTUWXY]{10})/i);
   const personMatch = raw.match(/(?:法人|法定代表人|联系人|负责人)[：:\s]*([^\s，,。；;0-9]{2,8})/);
 
-  const rawCompanyName = cleanQuotes(companyMatch?.[1] || currentForm.companyName || `${raw.slice(0, 6).replace(/[^\u4e00-\u9fa5a-zA-Z]/g, '') || '瑞智康养'}健康科技有限公司`);
-  const companyName = rawCompanyName || '苏州糙米量子科技有限公司';
-  const brandName = cleanQuotes(brandMatch?.[1] || currentForm.brandName || companyName.replace(/^(?:苏州|上海|厦门|深圳|广州|北京|杭州|成都)/, '').replace(/(?:科技|生物|健康|实业|商贸)?(?:有限责任|股份有限)?公司$/, '')) || '瑞智严选品牌';
+  // 未在资料中出现的工商信息一律留空，由申请人依营业执照填写，不做任何编造
+  const companyName = cleanQuotes(companyMatch?.[1] || currentForm.companyName || '');
+  const brandName = cleanQuotes(brandMatch?.[1] || currentForm.brandName || companyName.replace(/^(?:苏州|上海|厦门|深圳|广州|北京|杭州|成都)/, '').replace(/(?:科技|生物|健康|实业|商贸)?(?:有限责任|股份有限)?公司$/, ''));
   const taxonomy = inferBrandTaxonomy(raw);
   const registrationNo = (usccMatch?.[1] && isUnifiedSocialCreditCode(usccMatch[1]))
     ? usccMatch[1].toUpperCase()
     : (currentForm.registrationNo && isUnifiedSocialCreditCode(currentForm.registrationNo))
       ? currentForm.registrationNo
-      : makeValidUscc(companyName);
-  const contactName = personMatch?.[1] || currentForm.contactName || userName || '王经理';
-  const phone = phoneMatch?.[1] || currentForm.phone || '13800138000';
+      : '';
+  const contactName = personMatch?.[1] || currentForm.contactName || userName || '';
+  const phone = phoneMatch?.[1] || currentForm.phone || '';
 
   return {
     brandName,
     companyName,
-    categoryMajorId: taxonomy.majorId,
-    categoryMinorId: taxonomy.minorId,
+    categoryMajorId: currentForm.categoryMajorId || taxonomy.majorId,
+    categoryMinorId: currentForm.categoryMinorId || taxonomy.minorId,
     officialWebsite: currentForm.officialWebsite || '',
     socialLink: currentForm.socialLink || '',
     registrationNo,
-    legalRepresentative: personMatch?.[1] || currentForm.legalRepresentative || contactName,
-    companyType: currentForm.companyType || '有限责任公司（自然人投资或控股）',
-    registeredCapital: currentForm.registeredCapital || '100万人民币',
-    establishmentDate: currentForm.establishmentDate || '2025-01-15',
-    companyAddress: currentForm.companyAddress || '中国大陆品牌官方运营中心（AI 极速入驻已登记）',
-    businessScope: currentForm.businessScope || `一般项目：${taxonomy.categoryLabel}相关技术研发、健康管理咨询服务与产品销售`,
+    legalRepresentative: personMatch?.[1] || currentForm.legalRepresentative || '',
+    companyType: currentForm.companyType || '',
+    registeredCapital: currentForm.registeredCapital || '',
+    establishmentDate: currentForm.establishmentDate || '',
+    companyAddress: currentForm.companyAddress || '',
+    businessScope: currentForm.businessScope || '',
     contactName,
     phone,
-    wechat: currentForm.wechat || phone,
-    introduction:
-      `【${brandName} · 品牌官方入驻简介】\n` +
-      `${companyName}旗下核心品牌「${brandName}」，专注于${taxonomy.categoryLabel}领域。${raw}\n\n` +
-      `品牌秉持科学配方与严苛品控标准，结合平台 30% / 5% / 65% 透明分润机制与全国体验店网络，为会员提供高品质、可溯源的日常健康管理方案。（合规声明：品牌所有展示内容均遵循平台非医疗健康管理规范。）`,
+    wechat: currentForm.wechat || '',
+    introduction: currentForm.introduction || (raw ? `【${brandName || '品牌'} · 品牌简介】\n${raw}` : ''),
     pageTemplate: 'professional',
   };
 }
@@ -235,8 +187,9 @@ function buildProductDraftFromPrompt(prompt: string, currentForm: Record<string,
     raw.match(/(\d{1,2})\s*%?\s*[\/、，,\s]+(\d{1,2})\s*%?\s*[\/、，,\s]+(\d{1,2})\s*%?/);
 
   const isFrequencyDevice =
-    /频率密码|智能频率健康仪|三段能量|旋磁|体感光波|8\s*[-~到至]\s*14\s*微米|700\s*uT/i.test(raw) ||
-    (!raw && !hasExisting);
+    /频率密码|智能频率健康仪|三段能量|旋磁|体感光波|8\s*[-~到至]\s*14\s*微米|700\s*uT/i.test(raw);
+  // 共享设备（投放合作）不标价：资料明确提到共享/投放时自动切换，用户可改回零售
+  const shared = isSharedDeviceListing(currentForm.listingType) || detectSharedDeviceText(`${raw} ${currentForm.name || ''}`);
 
   // Determine product name
   let name = currentForm.name || '';
@@ -249,35 +202,29 @@ function buildProductDraftFromPrompt(prompt: string, currentForm: Record<string,
     name = '富智慧频率密码健康仪（三段能量 AI 变频系统）';
   } else if (!name) {
     const firstClause = raw.split(/[，,。；;\n]/)[0]?.replace(/^(?:帮我|请|我要|快速|一键)?(?:上架|新增|创建|生成|卖)?/, '').trim();
-    name = (firstClause && firstClause.length >= 3 && firstClause.length <= 36) ? firstClause : `${brandName}核心健康方案`;
+    name = (firstClause && firstClause.length >= 3 && firstClause.length <= 36) ? firstClause : '';
   }
 
   // Determine prices
   let priceNum = priceMatch?.[1]
     ? Number(priceMatch[1])
     : Number(currentForm.priceCny || currentForm.priceTwd || 0);
-  if (!Number.isFinite(priceNum) || priceNum <= 0) {
-    priceNum = isFrequencyDevice ? 39800 : 1280;
-  }
+  // 资料中没有的价格 / 库存不做推测，留空由品牌方填写
+  if (!Number.isFinite(priceNum) || priceNum <= 0) priceNum = 0;
 
   let supplyNum = supplyMatch?.[1]
     ? Number(supplyMatch[1])
     : Number(currentForm.supplyPriceCny || 0);
-  if (!Number.isFinite(supplyNum) || supplyNum <= 0 || supplyNum >= priceNum) {
-    supplyNum = Math.max(1, Math.round(priceNum * 0.55));
-  }
+  if (!Number.isFinite(supplyNum) || supplyNum <= 0) supplyNum = 0;
 
   let compareNum = compareMatch?.[1]
     ? Number(compareMatch[1])
     : Number(currentForm.compareAtPrice || 0);
-  if (!Number.isFinite(compareNum) || compareNum <= priceNum) {
-    compareNum = Math.round(priceNum * 1.25);
-  }
+  if (!Number.isFinite(compareNum) || compareNum <= priceNum) compareNum = 0;
 
-  let stockNum = stockMatch?.[1]
-    ? parseInt(stockMatch[1], 10)
-    : parseInt(String(currentForm.stockQuantity || '100'), 10);
-  if (!Number.isInteger(stockNum) || stockNum < 0) stockNum = 100;
+  const stockRaw = stockMatch?.[1] ?? String(currentForm.stockQuantity ?? '');
+  let stockNum: number | null = stockRaw !== '' ? parseInt(stockRaw, 10) : null;
+  if (stockNum !== null && (!Number.isInteger(stockNum) || stockNum < 0)) stockNum = null;
 
   let directRate = String(currentForm.directRate || '30');
   let upperRate = String(currentForm.upperRate || '5');
@@ -311,34 +258,39 @@ function buildProductDraftFromPrompt(prompt: string, currentForm: Record<string,
       '• 高发射率重叠吸收：8–14 微米波段平均发射率达 0.92±0.02，峰值波长位于 9.4 微米，与人体皮肤主要吸收区高度契合；\n' +
       '• AI 智能侦测调频：根据不同使用者状态自动调整波形与频率，并配备远程控制与门店投放运营后台。\n\n' +
       '【合规声明】本设备为非医疗日常健康管理与体感调理设备，不用于医疗诊断或疾病治疗。';
-  } else if (!description || /改文|重写|生成|优化|突出|强调/.test(raw)) {
-    const extraHighlight = raw ? `\n• 本次 AI 重点强化：${raw}` : '';
+  } else if (!description) {
     description =
-      `【核心卖点】\n${name}，由「${brandName}」官方严选出品，专为现代家庭与门店会员打造的${category}标杆单品。${extraHighlight}\n\n` +
-      `【核心规格与体验亮点】\n• 严选原料与核心工艺，品质可溯源；\n• 契合日常3个月周期化健康管理方案，支持门店体验与居家持续保养；\n• 纳入平台透明三段式分润体系（直推 ${directRate}% / 间推 ${upperRate}% / 近30天销售贡献池 ${activeRate}%）。\n\n` +
-      `【合规声明】本商品为日常健康营养/生活调理产品，不替代医疗诊断或药物治疗。`;
+      `【商品介绍】\n${raw || name}\n\n` +
+      `【合规声明】本商品为日常健康/生活类产品，不替代医疗诊断或药物治疗。`;
   } else if (raw && hasExisting && !priceMatch && !supplyMatch && !stockMatch) {
     description = `${description}\n\n【AI 补充亮点】${raw}`;
   }
 
-  const variantText = currentForm.variantText || (isFrequencyDevice
-    ? '版本规格：标准单机版（含主机+智能调频系统），门店旗舰运营版（含主机+专属支架+云端运营后台）'
-    : '规格：标准体验装，周期调理家庭装');
-  const shippingMethodsText = currentForm.shippingMethodsText || '顺丰大件/专线包邮，支持全国体验店自提与上门安装指导';
-  const fulfillmentInfo = currentForm.fulfillmentInfo || '品牌官方仓确认订单后 24–48 小时内顺丰专线发出，全国包邮并提供 1 对 1 远程调试与售后保障';
+  const variantText = currentForm.variantText || '';
+  const shippingMethodsText = shared ? '' : (currentForm.shippingMethodsText || '');
+  const fulfillmentInfo = shared ? '' : (currentForm.fulfillmentInfo || '');
 
-  const distributablePool = Math.max(0, Math.round(priceNum - supplyNum - priceNum * 0.006));
-  const agentReply = `已完成「${name}」全栏位智能配置：售价 ¥${priceNum.toLocaleString()}、品牌结算价 ¥${supplyNum.toLocaleString()}、划线价 ¥${compareNum.toLocaleString()}、库存 ${stockNum} 件，预估单件可分配推广池约 ¥${distributablePool.toLocaleString()}（按 ${directRate}% / ${upperRate}% / ${activeRate}% 自动结算）。`;
+  const missingLabels = shared ? [] : [
+    priceNum > 0 ? '' : '售价',
+    supplyNum > 0 ? '' : '结算价',
+    stockNum === null ? '库存' : '',
+    fulfillmentInfo ? '' : '发货方式',
+  ].filter(Boolean);
+  const agentReply = shared
+    ? `已整理「${name}」资料，商品类型为「共享设备（投放合作）」，不标售价；请核对后提交平台审核。`
+    : `已整理「${name}」资料${priceNum > 0 ? `：售价 ¥${priceNum.toLocaleString()}` : ''}${supplyNum > 0 ? `、结算价 ¥${supplyNum.toLocaleString()}` : ''}。${missingLabels.length ? `资料中未提供：${missingLabels.join('、')}，请补充。` : '请核对后提交平台审核。'}`;
 
   return {
     draft: {
       name,
       category,
       sku,
-      priceCny: String(priceNum),
-      compareAtPrice: String(compareNum),
-      supplyPriceCny: String(supplyNum),
-      stockQuantity: String(stockNum),
+      listingType: shared ? 'shared_device' : 'retail',
+      cooperationNote: String(currentForm.cooperationNote || ''),
+      priceCny: shared || priceNum <= 0 ? '' : String(priceNum),
+      compareAtPrice: shared || compareNum <= 0 ? '' : String(compareNum),
+      supplyPriceCny: shared || supplyNum <= 0 ? '' : String(supplyNum),
+      stockQuantity: shared || stockNum === null ? '' : String(stockNum),
       imageUrl,
       description,
       variantText,
@@ -364,12 +316,11 @@ export async function POST(request: NextRequest) {
     const currentForm = (body.currentForm && typeof body.currentForm === 'object') ? body.currentForm : {};
 
     if (mode === 'brand_apply') {
-      const parsed = parseBrandPrompt(prompt, currentForm, user?.name || '曹先生');
+      const parsed = parseBrandPrompt(prompt, currentForm, user?.name || '');
       const existingLicense = Array.isArray(currentForm.brandDocuments)
         ? currentForm.brandDocuments.find((doc: any) => doc?.kind === 'license' && doc?.token)
         : null;
-      const licenseDoc = ensureUserLicenseDocument(
-        user?.id || 0,
+      const licenseDoc = findUploadedLicenseDocument(
         existingLicense?.token || currentForm.businessLicenseDocument,
         existingLicense?.name || currentForm.businessLicenseName,
       );
@@ -378,21 +329,22 @@ export async function POST(request: NextRequest) {
         ? currentForm.brandDocuments.filter((doc: any) => doc?.token && doc?.kind !== 'license')
         : [];
       const brandDocuments = [
-        { token: licenseDoc.token, name: licenseDoc.name, kind: 'license' as const },
+        ...(licenseDoc ? [{ token: licenseDoc.token, name: licenseDoc.name, kind: 'license' as const }] : []),
         ...existingDocs,
       ];
 
       const fullDraft = {
         ...parsed,
-        businessLicenseDocument: licenseDoc.token,
-        businessLicenseName: licenseDoc.name,
+        businessLicenseDocument: licenseDoc?.token || '',
+        businessLicenseName: licenseDoc?.name || '',
         brandDocuments,
       };
 
       let submittedBrand = null;
       if (body.autoSubmit && user) {
-        // 仅平台管理员可直接核准；其他账号提交后待平台审核（lib 内亦有同样检查）
-        const autoApprove = body.autoApprove !== false && hasPlatformAdminAccess(user);
+        if (!licenseDoc) throw new Error('请先上传营业执照后再提交审核');
+        // 仅平台管理员且明确要求时才直接核准；其他账号提交后待平台审核（lib 内亦有同样检查）
+        const autoApprove = body.autoApprove === true && hasPlatformAdminAccess(user);
         submittedBrand = submitBrandApplication(user, {
           ...fullDraft,
           allowUpdatePending: true,
@@ -401,21 +353,28 @@ export async function POST(request: NextRequest) {
         
       }
 
+      const filled = (value: unknown) => Boolean(String(value ?? '').trim());
+      const fieldItem = (key: string, label: string, value: unknown) => ({
+        key, label,
+        status: filled(value) ? 'confirmed' as const : 'missing' as const,
+        note: filled(value) ? '已填写（待平台审核）' : `请填写${label}`,
+      });
+      const required = [
+        { key: 'business_license', label: '营业执照', status: licenseDoc ? 'confirmed' as const : 'missing' as const, note: licenseDoc ? '已上传，待平台审核' : '请上传营业执照' },
+        fieldItem('company_name', '公司主体', fullDraft.companyName),
+        fieldItem('registration_no', '统一社会信用代码', fullDraft.registrationNo),
+        fieldItem('brand_name', '品牌名称', fullDraft.brandName),
+        fieldItem('brand_intro', '品牌简介', fullDraft.introduction),
+      ];
       const completeChecklist = {
-        readyToSubmit: true,
-        missingRequired: [] as string[],
-        required: [
-          { key: 'business_license', label: '营业执照', status: 'confirmed' as const, note: `已自动装载并核验（${fullDraft.businessLicenseName}）` },
-          { key: 'company_name', label: '公司主体', status: 'confirmed' as const, note: `已核验：${fullDraft.companyName}` },
-          { key: 'registration_no', label: '统一社会信用代码', status: 'confirmed' as const, note: `已核验：${fullDraft.registrationNo}` },
-          { key: 'brand_name', label: '品牌名称', status: 'confirmed' as const, note: `已核验：${fullDraft.brandName}` },
-          { key: 'brand_intro', label: '品牌简介', status: 'confirmed' as const, note: '已自动生成并确认品牌介绍' },
-        ],
+        readyToSubmit: required.every((item) => item.status === 'confirmed'),
+        missingRequired: required.filter((item) => item.status === 'missing').map((item) => item.label),
+        required,
         optional: [
-          { key: 'legal_representative', label: '法定代表人', status: 'confirmed' as const, note: `已填写：${fullDraft.legalRepresentative}` },
-          { key: 'company_address', label: '登记住所', status: 'confirmed' as const, note: `已填写：${fullDraft.companyAddress}` },
-          { key: 'business_scope', label: '经营范围', status: 'confirmed' as const, note: '已填写经营范围' },
-          { key: 'patent_certificate', label: '外观设计专利证书 / 资质文件', status: 'confirmed' as const, note: '已挂载智能频率健康仪外观设计专利证书' },
+          fieldItem('legal_representative', '法定代表人', fullDraft.legalRepresentative),
+          fieldItem('company_address', '登记住所', fullDraft.companyAddress),
+          fieldItem('business_scope', '经营范围', fullDraft.businessScope),
+          { key: 'patent_certificate', label: '专利证书 / 资质文件', status: existingDocs.length ? 'confirmed' as const : 'missing' as const, note: existingDocs.length ? '已上传，待平台审核' : '如有请上传（选填）' },
         ],
       };
 
@@ -431,9 +390,11 @@ export async function POST(request: NextRequest) {
         autoApproved: submittedBrand?.status === 'approved',
         agentReply: submittedBrand
           ? submittedBrand.status === 'approved'
-            ? `🎉 AI Agent 已为您完成「${fullDraft.brandName}（${fullDraft.companyName}）」资料整理，并已开通品牌馆与品牌中心工作台。`
-            : `✅ AI Agent 已为您整理并提交「${fullDraft.brandName}（${fullDraft.companyName}）」品牌申请，平台审核通过后即可开通品牌馆与品牌中心工作台。`
-          : `✨ AI Agent 已为您自动填好「${fullDraft.brandName}（${fullDraft.companyName}）」全部 16 项工商、类目与品牌介绍栏位，可直接一键提交开通！`,
+            ? `「${fullDraft.brandName}」品牌申请已由平台管理员核准。`
+            : `已提交「${fullDraft.brandName}」品牌申请，平台审核通过后开通品牌工作台。`
+          : completeChecklist.readyToSubmit
+            ? `已根据资料预填表单，请对照营业执照核对后提交，提交后由平台审核。`
+            : `已根据资料预填部分栏位，仍需补充：${completeChecklist.missingRequired.join('、')}。提交后由平台审核。`,
       });
     }
 
@@ -443,25 +404,13 @@ export async function POST(request: NextRequest) {
       }
       const approvedBrand = getApprovedBrandForUser(user.id);
       const latestApp = listBrandApplications(user)[0];
-      const brandName = approvedBrand?.brandName || latestApp?.brandName || '富智慧频率密码健康仪';
+      const brandName = approvedBrand?.brandName || latestApp?.brandName || '';
       const { draft, agentReply } = buildProductDraftFromPrompt(prompt, currentForm, brandName);
 
       let publishedProduct = null;
       if (body.autoPublish) {
-        if (!approvedBrand && !hasPlatformAdminAccess(user)) {
-          throw new Error('品牌尚未通过平台审核，请先提交品牌申请并等待审核通过后再上架商品');
-        }
         if (!approvedBrand) {
-          const brandParsed = parseBrandPrompt(brandName, {}, user.name || '曹先生');
-          const licenseDoc = ensureUserLicenseDocument(user.id);
-          submitBrandApplication(user, {
-            ...brandParsed,
-            businessLicenseDocument: licenseDoc.token,
-            businessLicenseName: licenseDoc.name,
-            brandDocuments: [{ token: licenseDoc.token, name: licenseDoc.name, kind: 'license' }],
-            allowUpdatePending: true,
-            autoApprove: true,
-          });
+          throw new Error('品牌尚未通过平台审核，请先提交品牌申请并等待审核通过后再提交商品');
         }
 
         const productId = Number(body.productId || 0);
@@ -489,8 +438,8 @@ export async function POST(request: NextRequest) {
           ? publishedProduct.pendingRevision
             ? `✅ AI Agent 已把「${publishedProduct.name}」的修改提交平台审核；审核通过前商城继续显示当前上架版本。`
             : publishedProduct.status === 'approved'
-            ? `🚀 AI Agent 已为您生成并直接上架「${publishedProduct.name}」（售价 ¥${publishedProduct.priceCny}），现已同步至商城与您的品牌馆！`
-            : `✅ AI Agent 已生成「${publishedProduct.name}」（售价 ¥${publishedProduct.priceCny}）并提交平台审核，审核通过后自动上架。`
+            ? `「${publishedProduct.name}」已由平台管理员上架商城。`
+            : `已生成「${publishedProduct.name}」并提交平台审核，审核通过后上架商城。`
           : agentReply,
       });
     }

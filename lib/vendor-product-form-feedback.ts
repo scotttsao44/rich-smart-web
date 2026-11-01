@@ -5,11 +5,38 @@ export const productFieldLabels = {
   directRate: '直接推荐人比例', upperRate: '上层推荐人比例', activeRate: '销售贡献榜比例',
 } as const;
 
+export type ProductListingType = 'retail' | 'shared_device';
+
+export const SHARED_DEVICE_PRICE_LABEL = '投放合作 · 洽谈';
+
+export function isSharedDeviceListing(value: unknown) {
+  if (value && typeof value === 'object') return (value as Record<string, unknown>).listingType === 'shared_device';
+  return value === 'shared_device';
+}
+
+// 资料明确属于共享/投放型设备时才建议切换；用户可随时改回零售商品。
+export function detectSharedDeviceText(text: string) {
+  return /共享(设备|按摩|健康|理疗|充电|售货|仪器|机)|设备投放|投放合作|合作投放|投放(到|至|于|在)?(门店|商场|酒店|社区|场所|景区|医院|健身房)|扫码(使用|启动|付费|计时|体验)|按次(计费|收费|付费)|分成合作/.test(String(text || ''));
+}
+
 export function validateProductForm(form: Record<string, unknown>) {
   const errors: Partial<Record<keyof typeof productFieldLabels, string>> = {};
   const text = (key: string) => typeof form[key] === 'string' ? (form[key] as string).trim() : '';
-  for (const key of ['name', 'category', 'description', 'fulfillmentInfo'] as const) {
+  const shared = isSharedDeviceListing(form);
+  for (const key of (shared ? ['name', 'category', 'description'] : ['name', 'category', 'description', 'fulfillmentInfo']) as Array<'name' | 'category' | 'description' | 'fulfillmentInfo'>) {
     if (!text(key)) errors[key] = `请填写${productFieldLabels[key]}`;
+  }
+  if (shared) {
+    const rates = ['directRate', 'upperRate', 'activeRate'] as const;
+    for (const key of rates) {
+      const value = Number(form[key]);
+      if (!text(key) || !Number.isFinite(value)) errors[key] = `请填写有效的${productFieldLabels[key]}`;
+      else if (value < 0 || value > 100) errors[key] = '分润比例须介于 0% 至 100%';
+    }
+    if (rates.every((key) => !errors[key]) && Math.abs(rates.reduce((sum, key) => sum + Number(form[key]), 0) - 100) > 0.001) errors.directRate = '三项分润比例合计必须等于 100%';
+    const sharedImage = text('imageUrl');
+    if (sharedImage && !sharedImage.startsWith('/') && !/^https?:\/\//.test(sharedImage)) errors.imageUrl = '图片须为持久网址或站内路径，不能使用 data URL';
+    return errors;
   }
   for (const key of ['priceCny', 'supplyPriceCny', 'stockQuantity', 'directRate', 'upperRate', 'activeRate'] as const) {
     const value = Number(form[key]);
@@ -28,7 +55,7 @@ export function validateProductForm(form: Record<string, unknown>) {
   return errors;
 }
 
-const draftKeys = ['name', 'category', 'sku', 'priceCny', 'compareAtPrice', 'supplyPriceCny', 'stockQuantity', 'imageUrl', 'description', 'variantText', 'shippingMethodsText', 'fulfillmentInfo', 'directRate', 'upperRate', 'activeRate'] as const;
+const draftKeys = ['name', 'category', 'sku', 'priceCny', 'compareAtPrice', 'supplyPriceCny', 'stockQuantity', 'imageUrl', 'description', 'variantText', 'shippingMethodsText', 'fulfillmentInfo', 'directRate', 'upperRate', 'activeRate', 'cooperationNote'] as const;
 
 // Keep response data out of form state until it has a known shape and the user confirms it.
 export function productPdfCandidate(value: unknown): Record<string, string> {
@@ -67,6 +94,8 @@ export type ProductFormValues = {
   directRate: string;
   upperRate: string;
   activeRate: string;
+  listingType: ProductListingType;
+  cooperationNote: string;
 };
 
 export const emptyProductForm: ProductFormValues = {
@@ -85,6 +114,8 @@ export const emptyProductForm: ProductFormValues = {
   directRate: "30",
   upperRate: "5",
   activeRate: "65",
+  listingType: "retail",
+  cooperationNote: "",
 };
 
 export function productToFormValues(product: Record<string, any>): ProductFormValues {
@@ -111,5 +142,7 @@ export function productToFormValues(product: Record<string, any>): ProductFormVa
     directRate: String(split?.directRate ?? product?.directRate ?? "30"),
     upperRate: String(split?.upperRate ?? product?.upperRate ?? "5"),
     activeRate: String(split?.activeRate ?? product?.activeRate ?? "65"),
+    listingType: product?.listingType === "shared_device" ? "shared_device" : "retail",
+    cooperationNote: String(product?.cooperationNote || ""),
   };
 }

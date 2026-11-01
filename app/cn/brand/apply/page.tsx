@@ -431,7 +431,7 @@ export default function BrandApplyPage() {
       return next;
     });
     setErrors({});
-    setMessage('✨ AI 已从您的证照自动提取并填入公司主体、信用代码与分类，您可直接一键提交开通！');
+    setMessage('已从证照识别并填入公司主体、信用代码与分类，请核对后提交，提交后由平台审核。');
   };
 
   const uploadDocuments = async (kind: BrandApplicationDocumentKind, selected?: FileList | File[], forceOcr = false) => {
@@ -566,13 +566,13 @@ export default function BrandApplyPage() {
           prompt: promptToUse,
           currentForm: form,
           autoSubmit: Boolean(options?.autoSubmit),
-          autoApprove: options?.autoApprove !== false,
+          autoApprove: options?.autoApprove === true,
         }),
       });
       const data = await res.json();
       if (res.status === 401) {
         saveCurrentDraft();
-        setMessage('请先登录后使用 AI Agent 一键入驻。');
+        setMessage('请先登录后使用 AI 预填。');
         goLogin();
         return;
       }
@@ -595,11 +595,11 @@ export default function BrandApplyPage() {
         });
         setErrors({});
       }
-      setAgentReply(data.agentReply || '✨ AI Agent 已完成品牌资料自动填充！');
+      setAgentReply(data.agentReply || '已预填品牌资料，请核对后提交。');
       if (data.autoSubmitted) {
         clearDraft();
         setHasStoredDraft(false);
-        setMessage(data.agentReply || '🎉 品牌已通过 AI Agent 极速开通！');
+        setMessage(data.agentReply || '品牌申请已提交，平台审核中。');
         load();
       }
     } catch (err) {
@@ -716,7 +716,7 @@ export default function BrandApplyPage() {
     {authState === 'unauthenticated' && !hasStoredDraft ? <section className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-5 text-amber-950"><h2 className="text-xl font-black">请先登录后申请品牌入驻</h2><button type="button" onClick={goLogin} className="mt-4 rounded-lg bg-teal-700 px-5 py-3 font-black text-white">登录后继续申请</button></section> : null}
     {authState === 'unauthenticated' && hasStoredDraft ? <section className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-5 text-amber-950"><h2 className="text-lg font-black">已保留一份未提交草稿</h2><p className="mt-2 text-sm font-bold">请登录后继续提交。</p></section> : null}
     {message ? <div className="mt-5 rounded-lg border border-stone-200 bg-white p-4 text-sm font-bold">{message}</div> : null}
-    {loading ? <div className="mt-6 rounded-lg bg-white p-6">读取中...</div> : latest ? (() => { const meta = statusMeta[latest.status]; const Icon = meta.icon; return <section className={`mt-6 rounded-lg border p-5 ${meta.className}`}><div className="flex items-center gap-2 font-black"><Icon className="h-5 w-5" />{meta.label}</div><div className="mt-3 text-xl font-black">{latest.brandName}</div><div className="mt-1 text-sm">公司主体：{cleanQuoteText(latest.companyName)}</div><div className="mt-1 text-sm">品牌分类：{displayBrandCategory(latest)}</div>{latest.referrerBrandName ? <div className="mt-3 flex items-center gap-2 text-sm font-bold"><Handshake className="h-4 w-4" />品牌推荐商：{latest.referrerBrandName} · 推荐码 {latest.referrerBrandCode} · 毛利分润 {latest.referrerRewardRate || 0}%</div> : null}{latest.reviewNote ? <div className="mt-4 rounded-lg bg-white/75 p-3 text-sm"><strong>平台意见：</strong>{latest.reviewNote}</div> : null}{latest.status === 'approved' ? <div className="mt-4 flex flex-wrap gap-3"><Link href="/vendor/products/new" className="inline-flex rounded-lg bg-emerald-800 px-4 py-2 font-bold text-white">✨ AI 一键上架商品</Link><Link href="/vendor" className="inline-flex rounded-lg border border-emerald-800 bg-white px-4 py-2 font-bold text-emerald-800">进入品牌工作台</Link><Link href="/vendor/page-builder" className="inline-flex rounded-lg border border-teal-700 bg-teal-50 px-4 py-2 font-bold text-teal-900">AI 品牌馆设计器</Link></div> : <div className="mt-4 flex flex-wrap gap-3"><button type="button" disabled={agentLoading} onClick={() => void runAgentBrain({ presetPrompt: latest.brandName + " " + latest.companyName, autoSubmit: true, autoApprove: true })} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 font-black text-white shadow-sm hover:bg-teal-800 disabled:opacity-50"><Brain className="h-4 w-4" />{agentLoading ? "AI 极速开通中..." : "🚀 AI Agent 极速通道：立即通过核验并开通品牌工作台"}</button></div>}</section>; })() : null}
+    {loading ? <div className="mt-6 rounded-lg bg-white p-6">读取中...</div> : latest ? (() => { const meta = statusMeta[latest.status]; const Icon = meta.icon; return <section className={`mt-6 rounded-lg border p-5 ${meta.className}`}><div className="flex items-center gap-2 font-black"><Icon className="h-5 w-5" />{meta.label}</div><div className="mt-3 text-xl font-black">{latest.brandName}</div><div className="mt-1 text-sm">公司主体：{cleanQuoteText(latest.companyName)}</div><div className="mt-1 text-sm">品牌分类：{displayBrandCategory(latest)}</div>{latest.referrerBrandName ? <div className="mt-3 flex items-center gap-2 text-sm font-bold"><Handshake className="h-4 w-4" />品牌推荐商：{latest.referrerBrandName} · 推荐码 {latest.referrerBrandCode} · 毛利分润 {latest.referrerRewardRate || 0}%</div> : null}{latest.reviewNote ? <div className="mt-4 rounded-lg bg-white/75 p-3 text-sm"><strong>平台意见：</strong>{latest.reviewNote}</div> : null}{latest.status === 'approved' ? <div className="mt-4 flex flex-wrap gap-3"><Link href="/vendor/products/new" className="inline-flex rounded-lg bg-emerald-800 px-4 py-2 font-bold text-white">新增商品</Link><Link href="/vendor" className="inline-flex rounded-lg border border-emerald-800 bg-white px-4 py-2 font-bold text-emerald-800">进入品牌工作台</Link><Link href="/vendor/page-builder" className="inline-flex rounded-lg border border-teal-700 bg-teal-50 px-4 py-2 font-bold text-teal-900">AI 品牌馆设计器</Link></div> : latest.status === 'pending' ? <div className="mt-4 rounded-lg bg-white/75 p-3 text-sm font-bold">已提交，平台审核中。审核通过后开通品牌工作台。</div> : null}</section>; })() : null}
     {latest && authState === 'authenticated' ? <BrandDocumentReview key={JSON.stringify([latest.id, latest.companyName, latest.registrationNo, latest.submittedAt, latest.brandDocuments, latest.businessLicenseDocument, latest.profileDocument, latest.trademarkDocument])} applicationId={latest.id} /> : null}
     {canSubmit && (authState !== 'unauthenticated' || hasStoredDraft) ? <section className="mt-6 rounded-2xl border-2 border-teal-600 bg-gradient-to-br from-teal-950 via-stone-900 to-teal-900 p-6 text-white shadow-lg">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -724,29 +724,24 @@ export default function BrandApplyPage() {
           <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400 text-stone-950"><Brain className="h-5 w-5" /></span>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-black">阿富 AI Agent 招商大脑 · 一句话极速入驻</h2>
-              <span className="rounded-full bg-amber-400/20 px-2.5 py-0.5 text-xs font-black text-amber-300">Musk 极简模式 · 16 项表单 3 秒全自动</span>
+              <h2 className="text-xl font-black">AI 入驻助手 · 一句话预填</h2>
             </div>
-            <p className="mt-0.5 text-xs font-semibold text-teal-100/80">不用逐项手填！直接说一句话（或粘贴品牌/专利介绍、上传1张营业执照），Agent 自动补齐工商四要素、类目与合规简介，并支持一键秒开通品牌工作台。</p>
+            <p className="mt-0.5 text-xs font-semibold text-teal-100/80">粘贴公司与品牌介绍，AI 预填表单；营业执照请由申请人自行上传。请对照证照核对后提交，提交后由平台审核。</p>
           </div>
         </div>
       </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" disabled={agentLoading} onClick={() => { const p = "苏州糙米量子科技有限公司，品牌「富智慧频率密码健康仪」，法定代表人曹哲魁，国家外观设计专利 ZL 2025 3 0195027.X（智能频率健康仪），三段能量（上照射口频率+中段700uT旋磁+下方8-14微米体感光波）+ AI侦测自动变频系统"; setAgentPrompt(p); void runAgentBrain({ presetPrompt: p, autoSubmit: false }); }} className="rounded-full border border-amber-300/50 bg-amber-400/15 px-3.5 py-1.5 text-xs font-black text-amber-200 hover:bg-amber-400/25">⚡ 一键载入：富智慧频率密码健康仪（苏州糙米量子）</button>
-        <button type="button" disabled={agentLoading} onClick={() => { const p = "厦门本草源健康科技有限公司，主打品牌「本草源酵素」，做植物综合酵素与益生菌膳食营养补充，联系人林总 13800138000"; setAgentPrompt(p); void runAgentBrain({ presetPrompt: p, autoSubmit: false }); }} className="rounded-full border border-teal-400/40 bg-white/10 px-3.5 py-1.5 text-xs font-bold text-teal-100 hover:bg-white/20">🌿 示例：植物酵素与营养补充品牌</button>
-      </div>
       <div className="mt-3">
-        <textarea rows={3} value={agentPrompt} onChange={(e) => setAgentPrompt(e.target.value)} placeholder="跟 AI Agent 说一句话，或直接粘贴您的微信介绍/公司名/产品亮点（例如：我是苏州糙米量子科技有限公司，品牌叫富智慧频率密码健康仪，主打三段能量非接触调理...）" className="w-full rounded-xl border border-teal-500/40 bg-black/30 p-3.5 text-sm font-semibold text-white placeholder-teal-200/50 outline-none focus:border-amber-400" />
+        <textarea rows={3} value={agentPrompt} onChange={(e) => setAgentPrompt(e.target.value)} placeholder="粘贴公司全称、品牌名称、主营产品等介绍（例如：我们是 XX 科技有限公司，品牌叫 XX，主营……）" className="w-full rounded-xl border border-teal-500/40 bg-black/30 p-3.5 text-sm font-semibold text-white placeholder-teal-200/50 outline-none focus:border-amber-400" />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button type="button" disabled={agentLoading} onClick={() => void runAgentBrain({ autoSubmit: false })} className="inline-flex items-center gap-2 rounded-xl bg-amber-400 px-5 py-2.5 text-sm font-black text-stone-950 shadow hover:bg-amber-300 disabled:opacity-50">
-          <Brain className="h-4 w-4" />{agentLoading ? "Agent 思考中..." : "✨ AI 一键自动填满 16 个栏位"}
+          <Brain className="h-4 w-4" />{agentLoading ? "AI 预填中..." : "AI 预填表单"}
         </button>
-        <button type="button" disabled={agentLoading} onClick={() => void runAgentBrain({ autoSubmit: true, autoApprove: true })} className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/60 bg-emerald-600 px-5 py-2.5 text-sm font-black text-white shadow hover:bg-emerald-500 disabled:opacity-50">
-          🚀 {agentLoading ? "极速开通中..." : "Agent 一键填单并立即开通品牌馆（免等待直接上架商品）"}
+        <button type="button" disabled={agentLoading} onClick={() => void runAgentBrain({ autoSubmit: true, autoApprove: false })} className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/60 bg-emerald-600 px-5 py-2.5 text-sm font-black text-white shadow hover:bg-emerald-500 disabled:opacity-50">
+          {agentLoading ? "提交中..." : "AI 预填并提交审核"}
         </button>
         <button type="button" onClick={() => setShowManualForm((v) => !v)} className="ml-auto text-xs font-bold text-teal-200 underline underline-offset-4">
-          {showManualForm ? "收起下方详细核对栏位" : "展开下方 16 项详细栏位微调"}
+          {showManualForm ? "收起详细栏位" : "展开详细栏位核对"}
         </button>
       </div>
       {agentReply ? <div className="mt-3 rounded-xl border border-emerald-400/40 bg-emerald-950/60 p-3 text-xs font-bold text-emerald-200">{agentReply}</div> : null}

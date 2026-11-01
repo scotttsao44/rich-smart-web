@@ -8,6 +8,7 @@ import { useCart } from '@/app/providers';
 import { formatCny, getCnyPrice } from '@/lib/cn-market';
 import { PublicProduct } from '@/lib/product-public';
 import ShopProductImage from '@/components/ShopProductImage';
+import SharedDeviceLeadForm from '@/components/SharedDeviceLeadForm';
 
 export default function ProductDetailClient({ product }: { product: PublicProduct }) {
   const searchParams = useSearchParams();
@@ -15,7 +16,10 @@ export default function ProductDetailClient({ product }: { product: PublicProduc
   const [quantity, setQuantity] = useState(1);
   const [added, setAdded] = useState(false);
 
+  const shared = product.listingType === 'shared_device';
+
   const addToCart = () => {
+    if (shared) return;
     addItem({
       productId: product.id,
       name: product.name,
@@ -32,7 +36,7 @@ export default function ProductDetailClient({ product }: { product: PublicProduc
     setTimeout(() => setAdded(false), 1800);
   };
 
-  const cnyPrice = getCnyPrice(product);
+  const cnyPrice = shared ? 0 : getCnyPrice(product);
   const referrerBrandId = Number(searchParams.get('referrerBrandId') || 0);
   const referrerBrandName = searchParams.get('referrerBrandName') || '';
   const referrerBrandSlug = searchParams.get('referrerBrandSlug') || '';
@@ -59,6 +63,20 @@ export default function ProductDetailClient({ product }: { product: PublicProduc
             </div>
             <h1 className="mt-2 text-3xl font-bold text-gray-950">{product.name}</h1>
 
+            {shared ? (
+              <>
+                <div className="mt-6 rounded-lg border border-emerald-100 bg-emerald-50 p-4">
+                  <p className="text-2xl font-black text-[var(--caomi-forest-900,#1f3d2b)]">投放合作 · 洽谈</p>
+                  <p className="mt-1 text-sm font-bold text-emerald-800">共享设备{product.category ? ` · ${product.category}` : ''}</p>
+                </div>
+                {product.description ? (
+                  <p className="mt-5 whitespace-pre-line rounded-lg bg-stone-50 p-4 text-sm font-semibold leading-6 text-stone-700">{product.description}</p>
+                ) : null}
+                {product.cooperationNote ? <div className="mt-4 whitespace-pre-line rounded-lg border border-stone-200 p-4 text-sm text-stone-600"><strong className="text-stone-900">合作方式：</strong>{product.cooperationNote}</div> : null}
+                <SharedDeviceLeadForm productId={product.id} productName={product.name} refCode={searchParams.get('ref') || undefined} />
+              </>
+            ) : (
+            <>
             <div className="mt-6 rounded-lg border border-amber-100 bg-amber-50 p-4">
               <p className="text-3xl font-bold text-amber-700">{formatCny(cnyPrice)}</p>
               {product.category ? <p className="mt-1 text-sm font-bold text-amber-800">{product.category}</p> : null}
@@ -92,6 +110,8 @@ export default function ProductDetailClient({ product }: { product: PublicProduc
                 <Link href="/cn/cart" className="btn-secondary text-center">去结账</Link>
                 <Link href="/cn/shop" className="btn-outline text-center">继续购物</Link>
               </div>
+            )}
+            </>
             )}
           </section>
         </div>

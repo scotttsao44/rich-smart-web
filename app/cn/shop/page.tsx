@@ -57,6 +57,8 @@ interface Product {
   referrerBrandId?: number;
   referrerBrandName?: string;
   partnershipId?: string;
+  listingType?: string;
+  cooperationNote?: string;
 }
 
 function isShopProductRow(value: unknown): value is Product {
@@ -72,7 +74,7 @@ function isShopProductRow(value: unknown): value is Product {
   for (const key of ['priceTwd', 'priceCny']) {
     if (typeof row[key] === 'string' && (!row[key].trim() || !Number.isFinite(Number(row[key])) || Number(row[key]) < 0)) return false;
   }
-  for (const key of ['category', 'brandName', 'brandSlug', 'imageDisclosure', 'rating', 'tag', 'referrerBrandName', 'partnershipId']) {
+  for (const key of ['category', 'brandName', 'brandSlug', 'imageDisclosure', 'rating', 'tag', 'referrerBrandName', 'partnershipId', 'listingType', 'cooperationNote']) {
     if (row[key] != null && typeof row[key] !== 'string') return false;
   }
   for (const key of ['brandId', 'referrerBrandId', 'sold']) {
@@ -207,6 +209,7 @@ export default function ChinaShopPage() {
   }, [activeCategoryLabel, products, query]);
 
   const addToCart = (product: Product) => {
+    if (product.listingType === 'shared_device') return;
     addItem({
       productId: product.id,
       name: product.name,
@@ -364,7 +367,8 @@ export default function ChinaShopPage() {
             ) : (
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-4">
                 {filteredProducts.map((product) => {
-                  const cnyPrice = getCnyPrice(product);
+                  const shared = product.listingType === 'shared_device';
+                  const cnyPrice = shared ? 0 : getCnyPrice(product);
                   return (
                     <article key={product.id} className="overflow-hidden rounded-lg border border-stone-200 bg-white shadow-sm">
                       <Link href={productHref(product)} className="block">
@@ -377,14 +381,29 @@ export default function ChinaShopPage() {
                         <div className="p-3">
                           <div className="mb-2 text-xs font-black text-[var(--caomi-forest-700)]">商品品牌：{product.brandName || product.supplierName || '待确认'}</div>
                           <div className="line-clamp-2 min-h-[44px] font-black leading-6 text-stone-950">{product.name}</div>
-                          <div className="mt-2 flex items-center gap-1 text-xs font-bold text-amber-600">
-                            <Star className="h-3.5 w-3.5 fill-amber-500" />
-                            {productRating(product)} · 已售 {productSold(product)}
-                          </div>
+                          {shared ? (
+                            <div className="mt-2 text-xs font-bold text-[var(--caomi-forest-700)]">共享设备 · 投放合作</div>
+                          ) : (
+                            <div className="mt-2 flex items-center gap-1 text-xs font-bold text-amber-600">
+                              <Star className="h-3.5 w-3.5 fill-amber-500" />
+                              {productRating(product)} · 已售 {productSold(product)}
+                            </div>
+                          )}
                           <p className="mt-2 line-clamp-2 min-h-[40px] text-xs leading-5 text-stone-500">{product.description}</p>
                         </div>
                       </Link>
 
+                      {shared ? (
+                        <div className="flex items-end justify-between gap-2 px-3 pb-3">
+                          <div>
+                            <p className="text-base font-black text-[var(--caomi-forest-900)]">投放合作 · 洽谈</p>
+                            <p className="text-xs font-semibold text-stone-400">{productShopCategory(product)}</p>
+                          </div>
+                          <Link href={productHref(product)} className="inline-flex h-10 shrink-0 items-center justify-center rounded-full bg-[var(--caomi-forest-900)] px-3 text-xs font-black text-white hover:bg-[var(--caomi-leaf-700)]">
+                            留资料洽谈
+                          </Link>
+                        </div>
+                      ) : (
                       <div className="flex items-end justify-between gap-2 px-3 pb-3">
                         <div>
                           <p className="text-xl font-black text-red-600">{formatCny(cnyPrice)}</p>
@@ -399,6 +418,7 @@ export default function ChinaShopPage() {
                           {addedId === product.id ? <Sparkles size={17} /> : <ShoppingCart size={17} />}
                         </button>
                       </div>
+                      )}
                     </article>
                   );
                 })}

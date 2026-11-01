@@ -24,12 +24,14 @@ const REVISION_FIELD_LABELS: Record<string, string> = {
   compareAtPrice: '划线价', variants: '规格', shippingMethods: '配送方式', fulfillmentInfo: '发货说明',
   priceCny: '售价', priceTwd: '售价(TWD)', supplyPriceCny: '品牌结算价', stockQuantity: '库存',
   directRate: '直接推荐分润%', upperRate: '上层推荐分润%', activeRate: '销售贡献榜分润%', imageIsTest: '参考图标记', imageDisclosure: '图片说明',
+  listingType: '商品类型', cooperationNote: '合作方式说明',
 };
 
 function revisionSummary(product: LocalCnBrandProduct) {
   const revision = product.pendingRevision;
   if (!revision || !revision.fields || !Object.keys(revision.fields).length) return null;
-  const show = (value: unknown) => {
+  const show = (value: unknown, key?: string) => {
+    if (key === 'listingType') return value === 'shared_device' ? '共享设备（投放合作）' : '零售商品';
     if (value == null || value === '') return '（空）';
     if (Array.isArray(value)) return value.map((item) => (item && typeof item === 'object' ? `${(item as any).name}: ${((item as any).values || []).join('/')}` : String(item))).join('，') || '（空）';
     return String(value);
@@ -41,8 +43,8 @@ function revisionSummary(product: LocalCnBrandProduct) {
     changes: Object.keys(revision.fields).filter((key) => key !== 'priceTwd').map((key) => ({
       key,
       label: REVISION_FIELD_LABELS[key] || key,
-      before: show(revision.before?.[key]),
-      after: show(revision.fields[key]),
+      before: show(revision.before?.[key], key),
+      after: show(revision.fields[key], key),
     })),
   };
 }

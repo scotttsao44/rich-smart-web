@@ -5,7 +5,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AlertCircle, ArrowLeft, ChevronDown, FileText, ImagePlus, MoreHorizontal, Send, Sparkles, X } from 'lucide-react';
 import {
+  detectSharedDeviceText,
   emptyProductForm,
+  isSharedDeviceListing,
   productFieldLabels,
   productPdfCandidate,
   productPdfError,
@@ -18,11 +20,17 @@ const PRODUCT_DRAFT_STORAGE_KEY = 'richsmart_cn_vendor_new_product_draft';
 // 新增商品页：分类 / 封面 / 库存不预填，避免把示意值当成真实资料提交
 const initialForm: ProductFormValues = { ...emptyProductForm, category: '', imageUrl: '', stockQuantity: '' };
 
-const FLAGSHIP_PROMPT = '上架「富智慧频率密码健康仪（三段能量 AI 变频系统）」，零售价 39800 元，品牌结算价 23800 元，划线价 49800 元，库存 100 台。核心卖点：国家外观设计专利 ZL 2025 3 0195027.X（智能频率健康仪），上照射口频率能量 + 中段最大 700 uT 旋磁能量 + 下方 8-14 微米体感光波（峰值波长 9.4 微米、发射率 0.92±0.02）+ AI 智能侦测自动变频与远程运营后台。';
-const EDIT_EXAMPLE_PROMPT = '把售价改成 29800，品牌结算价改成 16800，划线价 36800，库存改成 200 台，突出门店体验引流与居家非接触式温热放松';
 
 type FieldKey = keyof ProductFormValues;
 type MissingItem = { key: FieldKey; label: string; hint: string; guessed: boolean; optional?: boolean };
+
+// 共享设备（投放合作）不标价、不发货：售价 / 供货价 / 库存 / 发货方式不需要
+const RETAIL_ONLY_KEYS: FieldKey[] = ['priceCny', 'supplyPriceCny', 'compareAtPrice', 'stockQuantity', 'fulfillmentInfo'];
+
+function missingOrderFor(form: ProductFormValues) {
+  const shared = isSharedDeviceListing(form.listingType);
+  return MISSING_ORDER.filter((row) => !shared || !RETAIL_ONLY_KEYS.includes(row.key));
+}
 
 const MISSING_ORDER: Array<{ key: FieldKey; label: string; optional?: boolean }> = [
   { key: 'name', label: '商品名称' },
@@ -73,7 +81,7 @@ function findMissing(form: ProductFormValues, sourceText: string, aiUsed: boolea
   const errors = validateProductForm(form);
   const source = sourceText.trim();
   const items: MissingItem[] = [];
-  for (const row of MISSING_ORDER) {
+  for (const row of missingOrderFor(form)) {
     const value = String(form[row.key] || '').trim();
     let missing = false;
     let guessed = false;
@@ -194,8 +202,8 @@ export default function NewVendorProductPage() {
   };
 
   // ② AI 生成：上传图片 → 读取 PDF → AI 解析文字 → 列出缺项
-  const generate = async (presetText?: string) => {
-    const text = (presetText ?? sourceText).trim();
+  const generate = async () => {
+    const text = sourceText.trim();
     if (!text && !pdfFile && !imageFiles.length) {
       setError('请先粘贴商品资料，或附上 PDF / 图片');
       return;
@@ -246,10 +254,12 @@ export default function NewVendorProductPage() {
             if (key in initialForm && (typeof value === 'string' || typeof value === 'number')) draft[key] = String(value);
           }
           next = { ...next, ...draft };
+          next.listingType = isSharedDeviceListing(draft.listingType) || detectSharedDeviceText(text) || isSharedDeviceListing(form.listingType) ? 'shared_device' : 'retail';
           // AI 示意图不当作封面
           next.imageUrl = keepCover || (isPlaceholderImage(next.imageUrl) ? '' : next.imageUrl);
         }
       }
+      if (!text && detectSharedDeviceText(`${next.name} ${next.description}`)) next.listingType = 'shared_device';
       setForm(next);
       setGallery(nextGallery);
       setFieldErrors({});
@@ -281,7 +291,7 @@ export default function NewVendorProductPage() {
       if (item.key === 'imageUrl') {
         if (value) merged.imageUrl = value;
       } else if (value || item.optional) {
-        merged[item.key] = value;
+        (merged as Record<string, string>)[item.key] = value;
       }
     }
     setForm(merged);
@@ -336,6 +346,16 @@ export default function NewVendorProductPage() {
   };
 
   // ③ 提交：服务器决定状态（平台管理员直接上架，其他账号一律待审核）
+  const shared = isSharedDeviceListing(form.listingType);
+  const setListingType = (value: 'retail' | 'shared_device') => {
+    setForm((current) => ({ ...current, listingType: value }));
+    setFieldErrors((current) => {
+      const next = { ...current };
+      for (const key of RETAIL_ONLY_KEYS) delete next[key];
+      return next;
+    });
+  };
+
   const submit = async (event?: React.FormEvent) => {
     event?.preventDefault();
     setError('');
@@ -356,7 +376,9 @@ export default function NewVendorProductPage() {
       const res = await fetch('/api/vendor/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, images }),
+        body: JSON.stringify(shared
+          ? { ...form, images, listingType: 'shared_device', priceCny: '', supplyPriceCny: '', compareAtPrice: '', stockQuantity: '', fulfillmentInfo: '' }
+          : { ...form, images, listingType: 'retail', cooperationNote: '' }),
       });
       const data = await readJson(res);
       if (!res.ok) throw new Error(readApiError(data, `提交失败（${res.status}）`));
@@ -377,8 +399,8 @@ export default function NewVendorProductPage() {
   const supplyNum = Number(form.supplyPriceCny || 0);
   const feeNum = retailNum > 0 ? Math.round(retailNum * 0.006 * 100) / 100 : 0;
   const poolNum = retailNum > supplyNum ? Math.max(0, Math.round((retailNum - supplyNum - feeNum) * 100) / 100) : 0;
-  const filledCount = MISSING_ORDER.filter((row) => !row.optional && String(form[row.key] || '').trim() && !(row.key === 'imageUrl' && isPlaceholderImage(form.imageUrl))).length;
-  const requiredCount = MISSING_ORDER.filter((row) => !row.optional).length;
+  const filledCount = missingOrderFor(form).filter((row) => !row.optional && String(form[row.key] || '').trim() && !(row.key === 'imageUrl' && isPlaceholderImage(form.imageUrl))).length;
+  const requiredCount = missingOrderFor(form).filter((row) => !row.optional).length;
   const inputClass = (key: FieldKey, extra = '') => `input-field ${extra} ${fieldErrors[key] ? 'border-red-500 bg-red-50/30' : ''}`;
   const fieldError = (key: FieldKey) => (fieldErrors[key] ? <p className="mt-1 text-xs font-bold text-red-600">{fieldErrors[key]}</p> : null);
 
@@ -393,9 +415,7 @@ export default function NewVendorProductPage() {
             </button>
             {moreOpen ? (
               <div className="absolute right-0 z-20 mt-2 w-64 overflow-hidden rounded-xl border border-stone-200 bg-white text-sm font-semibold shadow-lg">
-                <button type="button" className="block w-full px-4 py-3 text-left hover:bg-stone-50" onClick={() => { setMoreOpen(false); setSourceText(FLAGSHIP_PROMPT); void generate(FLAGSHIP_PROMPT); }}>一键载入旗舰单品（频率密码健康仪）</button>
-                <button type="button" className="block w-full border-t border-stone-100 px-4 py-3 text-left hover:bg-stone-50" onClick={() => { setMoreOpen(false); setSourceText(EDIT_EXAMPLE_PROMPT); }}>AI 对话改稿示例（改价 / 改卖点）</button>
-                <Link href="/vendor/products/bulk" className="block border-t border-stone-100 px-4 py-3 hover:bg-stone-50">批量 CSV 导入</Link>
+                <Link href="/vendor/products/bulk" className="block px-4 py-3 hover:bg-stone-50">批量 CSV 导入</Link>
                 <button type="button" className="block w-full border-t border-stone-100 px-4 py-3 text-left hover:bg-stone-50" onClick={() => { setMoreOpen(false); saveDraft(); }}>保存草稿到本机</button>
                 <Link href="/cn/shop" className="block border-t border-stone-100 px-4 py-3 text-teal-700 hover:bg-stone-50">前往商城</Link>
               </div>
@@ -403,8 +423,31 @@ export default function NewVendorProductPage() {
           </div>
         </div>
 
-        <h1 className="mt-4 text-2xl font-black">新增商品</h1>
-        <ol className="mt-1 flex gap-3 text-xs font-bold text-stone-500"><li>① 丢资料</li><li>② AI 生成</li><li>③ {isAdmin ? '提交并上架' : '提交审核'}</li></ol>
+        <header className="mt-5">
+          <h1 className="text-2xl font-black leading-tight">新增商品</h1>
+          <ol className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-bold text-stone-500">
+            <li>① 丢资料</li><li aria-hidden="true" className="text-stone-300">›</li>
+            <li>② AI 生成</li><li aria-hidden="true" className="text-stone-300">›</li>
+            <li>③ {isAdmin ? '提交并上架' : '提交审核'}</li>
+          </ol>
+        </header>
+
+        {/* 商品类型 */}
+        <div role="radiogroup" aria-label="商品类型" className="mt-4 grid grid-cols-2 gap-2 rounded-2xl border border-stone-200 bg-white p-1.5">
+          {([
+            { value: 'retail', title: '零售商品', sub: '标价销售 · 下单发货' },
+            { value: 'shared_device', title: '共享设备', sub: '投放合作 · 不标价' },
+          ] as const).map((option) => {
+            const active = (option.value === 'shared_device') === shared;
+            return (
+              <button key={option.value} type="button" role="radio" aria-checked={active} onClick={() => setListingType(option.value)} className={`rounded-xl px-3 py-2.5 text-left transition ${active ? 'bg-teal-700 text-white shadow-sm' : 'text-stone-700 hover:bg-stone-50'}`}>
+                <span className="block text-sm font-black">{option.title}</span>
+                <span className={`mt-0.5 block text-[11px] font-bold ${active ? 'text-teal-50' : 'text-stone-500'}`}>{option.sub}</span>
+              </button>
+            );
+          })}
+        </div>
+        {shared ? <p className="mt-2 px-1 text-xs font-semibold text-stone-500">共享设备不标售价、不走购物车；商城显示「投放合作 · 洽谈」，客户留资料后由品牌方联系。</p> : null}
 
         {/* ① 丢资料 */}
         <section className="mt-4 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
@@ -413,7 +456,7 @@ export default function NewVendorProductPage() {
             value={sourceText}
             onChange={(e) => setSourceText(e.target.value)}
             onPaste={(e) => { if (e.clipboardData?.files?.length) { e.preventDefault(); addFiles(e.clipboardData.files); } }}
-            placeholder="粘贴商品介绍 / 微信文案（含名称、售价、供货价、库存更快）…"
+            placeholder={shared ? '粘贴设备介绍 / 投放合作方式（名称、功能、合作模式）…' : '粘贴商品介绍 / 微信文案（含名称、售价、供货价、库存更快）…'}
             className="w-full resize-y rounded-xl border border-stone-200 bg-stone-50 p-3 text-base font-medium outline-none focus:border-teal-600 focus:bg-white"
           />
           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -456,10 +499,14 @@ export default function NewVendorProductPage() {
               <div className="grid gap-3 border-t border-stone-100 p-4 text-sm md:grid-cols-2">
                 <div><label className="label">商品名称 *</label><input ref={setFieldRef('name') as React.Ref<HTMLInputElement>} className={inputClass('name')} value={form.name} onChange={(e) => setField('name', e.target.value)} />{fieldError('name')}</div>
                 <div><label className="label">商品分类 *</label><input ref={setFieldRef('category') as React.Ref<HTMLInputElement>} className={inputClass('category')} value={form.category} onChange={(e) => setField('category', e.target.value)} placeholder="例如：健康食品" />{fieldError('category')}</div>
+                {!shared ? (
+                  <>
                 <div><label className="label">售价（元）*</label><input ref={setFieldRef('priceCny') as React.Ref<HTMLInputElement>} type="number" inputMode="decimal" className={inputClass('priceCny')} value={form.priceCny} onChange={(e) => setField('priceCny', e.target.value)} />{fieldError('priceCny')}</div>
                 <div><label className="label">品牌结算价 / 供货价（元）*</label><input ref={setFieldRef('supplyPriceCny') as React.Ref<HTMLInputElement>} type="number" inputMode="decimal" className={inputClass('supplyPriceCny')} value={form.supplyPriceCny} onChange={(e) => setField('supplyPriceCny', e.target.value)} placeholder="须低于售价" />{fieldError('supplyPriceCny')}</div>
                 <div><label className="label">划线价（选填）</label><input ref={setFieldRef('compareAtPrice') as React.Ref<HTMLInputElement>} type="number" inputMode="decimal" className={inputClass('compareAtPrice')} value={form.compareAtPrice} onChange={(e) => setField('compareAtPrice', e.target.value)} />{fieldError('compareAtPrice')}</div>
                 <div><label className="label">库存数量 *</label><input ref={setFieldRef('stockQuantity') as React.Ref<HTMLInputElement>} type="number" inputMode="numeric" className={inputClass('stockQuantity')} value={form.stockQuantity} onChange={(e) => setField('stockQuantity', e.target.value)} />{fieldError('stockQuantity')}</div>
+                  </>
+                ) : null}
                 <div className="md:col-span-2">
                   <label className="label">封面图 *</label>
                   <div className="flex items-center gap-2">
@@ -484,8 +531,14 @@ export default function NewVendorProductPage() {
                 </div>
                 <div className="md:col-span-2"><label className="label">商品说明 / 卖点 *（不可含医疗疗效宣称）</label><textarea ref={setFieldRef('description') as React.Ref<HTMLTextAreaElement>} rows={5} className={inputClass('description')} value={form.description} onChange={(e) => setField('description', e.target.value)} />{fieldError('description')}</div>
                 <div className="md:col-span-2"><label className="label">规格（每行一组，如 规格: 标准装, 家庭装）</label><textarea rows={2} className="input-field" value={form.variantText} onChange={(e) => setField('variantText', e.target.value)} /></div>
-                <div><label className="label">发货方式与时效 *</label><input ref={setFieldRef('fulfillmentInfo') as React.Ref<HTMLInputElement>} className={inputClass('fulfillmentInfo')} value={form.fulfillmentInfo} onChange={(e) => setField('fulfillmentInfo', e.target.value)} />{fieldError('fulfillmentInfo')}</div>
-                <div><label className="label">配送方式</label><input className="input-field" value={form.shippingMethodsText} onChange={(e) => setField('shippingMethodsText', e.target.value)} /></div>
+                {shared ? (
+                  <div className="md:col-span-2"><label className="label">合作方式说明（选填）</label><textarea rows={3} className="input-field" value={form.cooperationNote} onChange={(e) => setField('cooperationNote', e.target.value)} placeholder="例如：门店免费投放、按次分成，具体条件洽谈" /></div>
+                ) : (
+                  <>
+                    <div><label className="label">发货方式与时效 *</label><input ref={setFieldRef('fulfillmentInfo') as React.Ref<HTMLInputElement>} className={inputClass('fulfillmentInfo')} value={form.fulfillmentInfo} onChange={(e) => setField('fulfillmentInfo', e.target.value)} />{fieldError('fulfillmentInfo')}</div>
+                    <div><label className="label">配送方式</label><input className="input-field" value={form.shippingMethodsText} onChange={(e) => setField('shippingMethodsText', e.target.value)} /></div>
+                  </>
+                )}
                 <div><label className="label">SKU（选填）</label><input className="input-field" value={form.sku} onChange={(e) => setField('sku', e.target.value)} /></div>
                 <div className="grid grid-cols-3 gap-2 md:col-span-2">
                   <div><label className="label">直推%</label><input ref={setFieldRef('directRate') as React.Ref<HTMLInputElement>} type="number" className="input-field" value={form.directRate} onChange={(e) => setField('directRate', e.target.value)} /></div>
@@ -493,7 +546,7 @@ export default function NewVendorProductPage() {
                   <div><label className="label">贡献池%</label><input ref={setFieldRef('activeRate') as React.Ref<HTMLInputElement>} type="number" className="input-field" value={form.activeRate} onChange={(e) => setField('activeRate', e.target.value)} /></div>
                   {fieldErrors.directRate || fieldErrors.upperRate || fieldErrors.activeRate ? <p className="col-span-3 text-xs font-bold text-red-600">{fieldErrors.directRate || fieldErrors.upperRate || fieldErrors.activeRate}</p> : null}
                 </div>
-                {retailNum > 0 ? (
+                {!shared && retailNum > 0 ? (
                   <p className="rounded-lg bg-teal-50 p-2.5 text-xs font-bold text-teal-900 md:col-span-2">
                     单件推广池 ¥{poolNum.toLocaleString()}（扣 0.6% 通道费）· 直推 ¥{Math.round(poolNum * Number(form.directRate || 0) / 100).toLocaleString()} · 间推 ¥{Math.round(poolNum * Number(form.upperRate || 0) / 100).toLocaleString()} · 贡献池 ¥{Math.round(poolNum * Number(form.activeRate || 0) / 100).toLocaleString()}
                   </p>
@@ -506,7 +559,7 @@ export default function NewVendorProductPage() {
           <button ref={submitRef} type="submit" disabled={submitting || generating} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-stone-900 px-6 py-3.5 text-base font-black text-white shadow hover:bg-stone-800 disabled:opacity-50">
             <Send className="h-4 w-4" />{submitting ? '提交中…' : isAdmin ? '提交并上架' : '提交审核'}
           </button>
-          <p className="mt-2 text-center text-xs font-semibold text-stone-500">{isAdmin ? '平台管理员提交后直接上架商城' : '提交后由平台审核，通过后自动上架商城'}</p>
+          <p className="mt-2 text-center text-xs font-semibold text-stone-500">{isAdmin ? '平台管理员提交后直接上架商城' : '提交后由平台审核，通过后上架商城'}</p>
         </form>
       </div>
 
