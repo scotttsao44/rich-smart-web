@@ -8,14 +8,21 @@ import { useRouter } from 'next/navigation';
 import { Package, ShoppingBag, Users, LayoutDashboard, MessageCircle, ShieldCheck } from 'lucide-react';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, login } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
-    const timer = setTimeout(() => setAuthChecked(true), 100);
-    return () => clearTimeout(timer);
+    // 等 /api/auth/me 返回再判断（手机网络较慢时，避免已登录的会话被固定 100ms 计时误跳登录页）
+    let alive = true;
+    fetch('/api/auth/me', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (alive && data?.user) login(data.user); })
+      .catch(() => {})
+      .finally(() => { if (alive) setAuthChecked(true); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {

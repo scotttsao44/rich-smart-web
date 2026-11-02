@@ -43,7 +43,8 @@ export async function notifyKefuHandoff(conv: KefuConversation, reason: string, 
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n) && n > 0);
   const simulated = isSimulatedOpenid(conv.openid);
-  const link = `${appUrl()}/admin/wechat-inbox?openid=${encodeURIComponent(conv.openid)}`;
+  // 链接只带会话 openid（不含任何凭证）；在微信内打开会走服务号 snsapi_base 授权，白名单 openid 才进后台，其余回管理员登录页
+  const link = `${appUrl()}/api/auth/wechat/kefu-admin?openid=${encodeURIComponent(conv.openid)}`;
   const who = conv.memberName || `访客 ${conv.openid.slice(-6)}`;
   const time = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
   const summary = shortText(opts.detail || lastText || '(非文字消息)', 18);

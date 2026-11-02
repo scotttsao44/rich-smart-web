@@ -21,6 +21,12 @@ export interface SessionUser {
   referralSharingEnabled?: boolean;
   demoAccount?: boolean;
   emailCredentialVersion?: number;
+  // 仅由 /api/auth/wechat/kefu-admin（服务号 snsapi_base 授权）写入；每次请求重新核对 KEFU_NOTIFY_OPENIDS 白名单
+  kefuAdminOpenid?: string;
+}
+
+export function kefuAdminOpenids() {
+  return String(process.env.KEFU_NOTIFY_OPENIDS || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
 function authSecret() {
@@ -88,6 +94,7 @@ export function readSessionToken(token: string | undefined): SessionUser | null 
       referralSharingEnabled: parsed.referralSharingEnabled !== false,
       demoAccount: parsed.demoAccount === true,
       emailCredentialVersion: Number.isSafeInteger(parsed.emailCredentialVersion) ? parsed.emailCredentialVersion : undefined,
+      kefuAdminOpenid: parsed.kefuAdminOpenid ? String(parsed.kefuAdminOpenid) : undefined,
     };
   } catch {
     return null;
@@ -157,6 +164,11 @@ export async function getFreshSessionUser(request: NextRequest) {
     const localUser = findLocalCnUserById(session.id);
     if (!localUser) return null;
     if (localUser.emailRegistrationId && session.emailCredentialVersion !== (localUser.emailCredentialVersion || 1)) return null;
+    const kefuAdmin = Boolean(
+      session.kefuAdminOpenid
+      && kefuAdminOpenids().includes(session.kefuAdminOpenid)
+      && localUser.wechatOfficialOpenId === session.kefuAdminOpenid,
+    );
     return {
       id: localUser.id,
       name: localUser.name,
@@ -165,10 +177,11 @@ export async function getFreshSessionUser(request: NextRequest) {
       role: localUser.role,
       region: 'CN',
       referralCode: localUser.referralSharingEnabled === false ? undefined : localUser.referralCode,
-      platformAdmin: localUser.platformAdmin === true,
+      platformAdmin: localUser.platformAdmin === true || kefuAdmin,
       referralSharingEnabled: localUser.referralSharingEnabled !== false,
       demoAccount: localUser.email.startsWith('brand-demo-'),
       emailCredentialVersion: localUser.emailRegistrationId ? (localUser.emailCredentialVersion || 1) : undefined,
+      kefuAdminOpenid: kefuAdmin ? session.kefuAdminOpenid : undefined,
     };
   }
 
