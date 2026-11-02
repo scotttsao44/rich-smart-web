@@ -24,6 +24,8 @@ import {
   isAllowedHealthUrl,
   type KefuDocKey,
   kefuAfterSaleReply,
+  KEFU_RETURN_POLICY,
+  KEFU_ORDERS_URL,
   kefuSharedDeviceReply,
   kefuApplyReply,
   kefuBlockedTerm,
@@ -51,6 +53,13 @@ import {
   KEFU_CODE_REPLY,
   KEFU_PASSWORD_REPLY,
   KEFU_PHONE_CHANGE_REPLY,
+  KEFU_ACCOUNT_DELETE_REPLY,
+  KEFU_INVOICE_REPLY,
+  KEFU_SHIPPING_FEE_REPLY,
+  KEFU_TERM_REPLY,
+  KEFU_DEPOSIT_REPLY,
+  kefuStoresLine,
+  kefuStoresReply,
   KEFU_MEMBER_BENEFIT_REPLY,
   KEFU_REFERRAL_CODE_REPLY,
   KEFU_ADDRESS_CHANGE_REPLY,
@@ -458,7 +467,8 @@ function healthTagged(openid: string) {
 // 价格路由：先分清问的是哪一种费用；含糊的「多少钱」看上文，仍不清楚就问一个澄清问题
 function priceReply(simple: string, prevTag: string): { text: string; tag: string } | null {
   if (/(一次|每次|单次).{0,6}(多少|几块|合多少)|合多少钱|算一下.{0,6}一次/.test(simple) && /(次卡|算|合)/.test(simple)) return { text: KEFU_PER_USE_REPLY, tag: 'price_tier' };
-  if (/(用不完|过期|退|押金|转让)/.test(simple) && /(次卡|押金|机器|设备)/.test(simple)) return { text: KEFU_CONTRACT_REPLY, tag: 'contract' };
+  if (/押金|保证金/.test(simple)) return { text: KEFU_DEPOSIT_REPLY, tag: 'contract' };
+  if (/(用不完|过期|退|转让)/.test(simple) && /(次卡|机器|设备)/.test(simple)) return { text: KEFU_CONTRACT_REPLY, tag: 'contract' };
   if (/(月卡|年卡)/.test(simple)) return { text: KEFU_MEMBER_CARD_REPLY, tag: 'price_member' };
   if (/(便宜|优惠|打折|折扣|活动)/.test(simple)) return { text: KEFU_DISCOUNT_REPLY, tag: 'price_tier' };
   if (/(哪一档|哪档|选哪|买哪)/.test(simple)) return { text: kefuTierPickReply(), tag: 'price_tier' };
@@ -522,8 +532,12 @@ async function handleText(openid: string, text: string, deadline: number): Promi
 
   if (RE_IDENTITY.test(simple) && !RE_HUMAN_ASK.test(simple.replace(/真人|人工智能/g, ''))) return passive(openid, KEFU_BOT_IDENTITY_REPLY, 'identity');
 
+  // 合同年限是一般问题，AI 直接回答（不转人工）
+  if (/(几年|多少年|年限|期限|多长时间|多久)/.test(simple) && /(合同|合作|签)/.test(simple) && !RE_HUMAN_ASK.test(simple) && !RE_COMPLAINT_TONE.test(simple) && !/(发票|开票|赔|扣)/.test(simple)) return passive(openid, KEFU_TERM_REPLY, 'contract');
   if (RE_HUMAN.test(simple)) {
     handoff(openid, RE_DISPUTE.test(simple) ? '投诉纠纷／赔偿／合同发票／付款' : '客人要求人工', text, true);
+    // 开发票：仍转人工开具，但先把开票规则告诉客人
+    if (/(发票|开票)/.test(simple) && !RE_COMPLAINT_TONE.test(simple) && !RE_HUMAN_ASK.test(simple)) return passive(openid, KEFU_INVOICE_REPLY, 'handoff');
     return passive(openid, RE_COMPLAINT_TONE.test(simple) ? KEFU_COMPLAINT_REPLY : KEFU_HANDOFF_REPLY, 'handoff');
   }
 
@@ -540,6 +554,10 @@ async function handleText(openid: string, text: string, deadline: number): Promi
 
   // 次卡／合作／设备相关的「能退吗」以合同为准；商城退换货走售后登记
   if ((RE_AFTERSALE.test(simple) || /(能退吗|可以退吗|能不能退)/.test(simple)) && /(次卡|合作|设备|机器|押金)/.test(simple)) return passive(openid, KEFU_CONTRACT_REPLY, 'contract');
+  // 只问退换货规则（没有订单号、没说质量问题、没说要申请）：直接答规则，不登记售后
+  if ((RE_AFTERSALE.test(simple) || /(能退吗|可以退吗|能不能退|能换吗)/.test(simple)) && /(谁出|谁承担|几天|多少天|政策|规定|规则|能退|可以退|能不能退|能换|吗|么)/.test(simple) && !/(\d{6,}|质量|破损|坏|发错|少发|我要|申请|帮我|已经|怎么还没|没到账|投诉)/.test(simple) && !/(次卡|合作|设备|机器|押金)/.test(simple) && !['order', 'aftersale'].includes(prevTag)) {
+    return passive(openid, `${KEFU_RETURN_POLICY}\n要申请的话，请在「我的订单」${KEFU_ORDERS_URL} 找到订单号，回复订单号和原因即可。`, 'aftersale');
+  }
   if (RE_AFTERSALE.test(simple) || /(质量问题|有破损|坏的|发错|少发)/.test(simple) || (/(能退吗|可以退吗|能不能退)/.test(simple) && ['order', 'shop', 'aftersale'].includes(prevTag))) {
     registerAfterSale(openid, text);
     return passive(openid, kefuAfterSaleReply(ownOrders(openid)), 'aftersale');
@@ -562,7 +580,8 @@ async function handleText(openid: string, text: string, deadline: number): Promi
   if (/(注册|登录|登陆)/.test(simple) && /(怎么|如何|在哪|哪里|电脑|会员)/.test(simple) && !/(入驻|品牌)/.test(simple)) return passive(openid, KEFU_LOGIN_REPLY, 'member');
   if (/(推荐码|邀请码|推荐人)/.test(simple) && !/(奖励|提成|佣金)/.test(simple) && !/(官方直属|忘|没填|绑定)/.test(simple)) return passive(openid, KEFU_REFERRAL_CODE_REPLY, 'referral');
   if (/(支付宝|货到付款|信用卡|花呗|怎么付款|付款方式|支付方式)/.test(simple) && !RE_DISPUTE.test(simple)) return passive(openid, `商城目前只支持微信支付（支付宝、货到付款暂未开通），下单后用微信支付付款即可。商城：https://rich-smart.com.cn/cn/shop`, 'shop');
-  if (/(包邮|运费|邮费)/.test(simple)) return passive(openid, `商城商品由品牌方／工厂一件代发，运费、包邮以商品页说明为准：https://rich-smart.com.cn/cn/shop`, 'shop');
+  if (/(包邮|运费|邮费)/.test(simple) && !/(退|换)/.test(simple)) return passive(openid, KEFU_SHIPPING_FEE_REPLY, 'shop');
+  if (/注销/.test(simple)) return passive(openid, KEFU_ACCOUNT_DELETE_REPLY, 'privacy');
   if (/(改地址|修改地址|地址填错|换地址|地址写错)/.test(simple)) return passive(openid, KEFU_ADDRESS_CHANGE_REPLY, 'shop');
   if (/(品牌方).{0,6}(电话|联系方式|联系)/.test(simple)) return passive(openid, KEFU_BRAND_CONTACT_REPLY, 'shop');
   if (/(入驻|上架)/.test(simple) || (prevTag === 'brand' && /(审核|多久|收费|费用|要钱)/.test(simple))) {
@@ -578,7 +597,7 @@ async function handleText(openid: string, text: string, deadline: number): Promi
   if (/专利/.test(simple)) return passive(openid, KEFU_PATENT_REPLY, 'docs');
   if (/(国家认证|权威认证|有没有认证|正规吗)/.test(simple)) return passive(openid, kefuDocsReply(['emc', 'wavelength', 'insurance']), 'docs');
   if (/(数据|资料|报告|隐私|信息|电话|号码).{0,10}(泄露|别人|外泄|卖|给别人|安全|删除|删掉|注销)|(删除|删掉|注销).{0,6}(资料|数据|账号|信息)|别人能看到/.test(simple)) {
-    if (/(删除|删掉|注销)/.test(simple)) return passive(openid, `账号注销和资料删除的具体流程，我这边暂时没有可对外的资料。麻烦留言您的手机号和要删除的内容，客服同事核实身份后联系您处理。`, 'privacy');
+    if (/(删除|删掉|注销)/.test(simple)) return passive(openid, KEFU_ACCOUNT_DELETE_REPLY, 'privacy');
     return passive(openid, KEFU_PRIVACY_REPLY, 'privacy');
   }
   if (RE_DOCS.test(simple) || (/^(那)?(检测报告|保险|证书|说明书)呢?$/.test(c))) {
@@ -645,12 +664,13 @@ async function handleText(openid: string, text: string, deadline: number): Promi
     if (/(一个机器|同一个|一样吗|是一个|一起的)/.test(simple)) return passive(openid, '不是同一台：健康仪是远红外生育光波＋旋磁的非接触体验设备；检测系统是另外戴头带采集生物电信号，生成 343 项指标的评估报告（3D／9D／18D 三个版本），结果只作日常健康管理参考，不用于临床。', 'detect');
     return passive(openid, KEFU_DETECT_INTRO, 'detect');
   }
-  if (/^(要多久|多久|多长时间|几分钟)$/.test(c) && prevTag === 'detect') return passive(openid, `检测用时我这边暂时没有准确资料，不乱讲，以门店现场为准。${KEFU_LEAD_ASK}`, 'detect');
+  if (/^(要多久|多久|多长时间|几分钟)$/.test(c) && prevTag === 'detect') return passive(openid, `检测一次约 15–30 分钟，非侵入；现场出即时报告。${KEFU_LEAD_ASK}`, 'detect');
 
   // 产品介绍／规格／流程
   if (/踩/.test(simple)) return passive(openid, `不是哦～阿富同学是银灰色立式设备，照射头在上方、电动升降，坐着或躺着体验，人不用站上去，也不接触机器。\n${KEFU_PRODUCT_INTRO.split('\n').slice(1, 4).join('\n')}`, 'product');
   if (/(多大|尺寸|大小|占地|多重|重量|功率|耗电|几瓦|频率范围|多少赫兹|Hz|参数|规格|小一点|家用|家里)/i.test(simple)) {
-    if (/(家用|家里|小一点)/.test(simple)) return passive(openid, `阿富同学是放在合作门店里的立式设备，家用版或更小的款式我这边暂时没有资料。可以先到合作门店体验，${KEFU_LEAD_ASK}`, 'product');
+    if (/(家用|家里|小一点)/.test(simple)) return passive(openid, `门店用的是立式机（约 120×61.5×47 cm）；另有家用台式版，目前以门店合作为主，家用版的价格和购买方式请留电话由专人对接。也可以先到合作门店体验，${KEFU_LEAD_ASK}`, 'product');
+    if (/(频率范围|多少赫兹|赫兹|Hz)/i.test(simple) && !/(电压|电源|插电)/.test(simple)) return passive(openid, '频率范围我这边没有准确数字，不乱报。可以对外说明的是：远红外 8–14 μm、峰值波长 9.4 μm（有 CNAS 波长检测报告），另有旋磁。需要更多参数的话留言您的手机号，客服同事确认后告诉您。', 'product');
     return passive(openid, KEFU_SPECS, 'product');
   }
   if (/(照射面积|面积多大)/.test(simple)) return passive(openid, '单次照射面积约 300×200 mm，照射头可电动升降、角度可调。', 'product');
@@ -679,7 +699,9 @@ async function handleText(openid: string, text: string, deadline: number): Promi
   if (lead.phoneNow || wantsVisit || cityOnly) {
     const ask = !lead.phoneNow && lead.phone;
     let reply = leadReply(lead.phoneNow, lead.city, lead.phone);
-    if (!lead.phoneNow && !lead.phone && lead.city) reply = `${lead.city}的合作门店需要客服同事帮您确认，麻烦留一下您的手机号，客服同事会尽快联系您。`;
+    // 找门店：给出可公开的门店（店名＋城市），再请留电话安排最近体验点
+    if (!lead.phoneNow && !lead.phone) reply = kefuStoresReply(lead.city);
+    else if (ask) reply = `${kefuStoresLine(lead.city)}\n${reply}`;
     return passive(openid, reply, ask ? 'lead_confirm' : 'lead');
   }
 
@@ -691,7 +713,7 @@ async function handleText(openid: string, text: string, deadline: number): Promi
   if (/(奖励|提成|佣金|返利|返现)/.test(simple) && /(推荐|介绍|转发|拉人|朋友)/.test(simple)) return passive(openid, KEFU_REFERRAL_REWARD_REPLY, 'referral');
 
   // 合作细节
-  if (/(押金)/.test(simple)) return passive(openid, `押金方面我这边没有资料，合作条件以双方签署的合同为准。${KEFU_CONTRACT_REPLY.replace(/^这个以双方签署的合同为准，我这边不替合同下结论。/, '')}`, 'contract');
+  if (/(押金|保证金)/.test(simple)) return passive(openid, KEFU_DEPOSIT_REPLY, 'contract');
   if (/(搬|挪|换.{0,2}店|转移)/.test(simple) && /(机器|设备)/.test(simple)) return passive(openid, `设备所有权归公司，门店在合作期内有使用权；能不能换到另一家店使用以合同为准。${KEFU_CONTRACT_REPLY.replace(/^这个以双方签署的合同为准，我这边不替合同下结论。/, '')}`, 'contract');
   if (/(场地|要求|条件)/.test(simple) && /(场地|放|门店|店|合作|申请)/.test(simple) && !/(入驻)/.test(simple)) return passive(openid, KEFU_SITE_REQUIREMENTS, 'site');
   if (/(多久|几天).{0,6}(装|安装|到货|送到)|装好/.test(simple) && !/(商城|快递|商品)/.test(simple)) return passive(openid, KEFU_INSTALL_REPLY, 'install');
