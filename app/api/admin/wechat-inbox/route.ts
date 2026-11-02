@@ -85,6 +85,10 @@ export async function POST(request: NextRequest) {
   }
 
   if (action === 'takeover' || action === 'release' || action === 'close') {
+    // 幂等：状态没有变化就不再写系统消息（避免重复点击刷出多条「交回 AI」）
+    const humanActive = conv.status === 'human' && !!conv.pausedUntil && Date.parse(conv.pausedUntil) > Date.now();
+    const already = action === 'takeover' ? humanActive : action === 'release' ? conv.status === 'ai' : conv.status === 'closed';
+    if (already) return NextResponse.json({ ok: true, unchanged: true, status: conv.status });
     updateKefuConversation(openid, (c) => {
       if (action === 'takeover') {
         c.status = 'human';
@@ -99,7 +103,7 @@ export async function POST(request: NextRequest) {
       }
     });
     appendKefuMessage(openid, { role: 'system', type: 'event', text: `${adminName}：${action === 'takeover' ? '接手人工' : action === 'release' ? '交回 AI' : '标记已处理'}` });
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, unchanged: false, status: action === 'takeover' ? 'human' : action === 'release' ? 'ai' : 'closed' });
   }
 
   if (action === 'attribution') {

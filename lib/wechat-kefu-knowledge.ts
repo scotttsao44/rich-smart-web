@@ -10,6 +10,10 @@ export const KEFU_SITE = 'https://rich-smart.com.cn';
 // 主推申请链接 /cn/afu 尚未上线：设环境变量 KEFU_AFU_LINK_ENABLED=1 后才对客人发送，否则用商城页＋电话。
 export const KEFU_AFU_URL = `${KEFU_SITE}/cn/afu`;
 export const KEFU_SHOP_URL = `${KEFU_SITE}/cn/shop`;
+export const KEFU_ORDERS_URL = `${KEFU_SITE}/cn/orders`;
+export const KEFU_LOGIN_URL = `${KEFU_SITE}/cn/login`;
+export const KEFU_BRAND_APPLY_URL = `${KEFU_SITE}/cn/brand/apply`;
+export const KEFU_ICP = '苏ICP备2026083440号-1';
 export function kefuAfuLinkEnabled() {
   return String(process.env.KEFU_AFU_LINK_ENABLED || '').trim() === '1';
 }
@@ -52,6 +56,7 @@ export const KEFU_GREETING = [
   '2. 门店合作与预购次数（次卡）',
   '3. 怎么申请机器',
   '4. 使用前注意事项、保险与检测报告',
+  '5. 商城订单、发货与售后',
   `需要真人客服请回复「人工」，或致电 ${KEFU_PHONE}。`,
 ].join('\n');
 
@@ -106,6 +111,66 @@ export function kefuDocsReply(keys: KefuDocKey[]) {
   return lines.join('\n');
 }
 
+// 商城订单状态（与「我的订单」页一致的说法）
+function orderStatusText(o: { status?: string; paymentStatus?: string; refundedAt?: string | null }) {
+  if (o.refundedAt || o.paymentStatus === 'refunded' || o.status === 'refunded') return '已退款';
+  if (o.status === 'cancelled') return '已取消';
+  if (o.status === 'completed') return '已完成';
+  if (o.status === 'delivered') return '已签收';
+  if (o.status === 'shipped') return '已发货';
+  if (o.status === 'paid' || o.paymentStatus === 'paid') return '已付款，待品牌方发货';
+  if (o.status === 'pending_payment') return '待付款';
+  return '处理中';
+}
+function cnTime(iso?: string | null) {
+  if (!iso) return '';
+  const d = new Date(Date.parse(iso) + 8 * 3600 * 1000);
+  return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 16).replace('T', ' ');
+}
+export const KEFU_SHIPPING_RULE = '商城商品都由品牌方／工厂直接一件代发，具体发货和到货时间以商品页说明为准，也可以咨询品牌方；发货后物流单号会显示在订单里。';
+type KefuOrderLike = {
+  orderNo: string; status?: string; paymentStatus?: string; paidAt?: string | null; shippedAt?: string | null; refundedAt?: string | null;
+  trackingNumber?: string | null; shippingCarrier?: string | null; createdAt: string;
+  items?: Array<{ productName?: string; quantity?: number; brandName?: string | null; ownerBrandName?: string | null }>;
+};
+// orders＝null 表示服务号未绑定会员；只会传入客人本人的订单
+export function kefuOrderReply(orders: KefuOrderLike[] | null) {
+  const lines = [KEFU_SHIPPING_RULE];
+  if (!orders) {
+    lines.push(`查看您的订单和物流：在网站登录后打开「我的订单」${KEFU_ORDERS_URL}`);
+    return lines.join('\n');
+  }
+  if (!orders.length) {
+    lines.push(`您的账号下暂时没有查到商城订单。可以登录后在「我的订单」查看：${KEFU_ORDERS_URL}`);
+    return lines.join('\n');
+  }
+  lines.push(orders.length > 3 ? '您最近的 3 笔订单：' : '您的订单：');
+  orders.slice(0, 3).forEach((o, i) => {
+    const items = (o.items || []).map((it) => `${it.productName || '商品'}×${it.quantity || 1}`).join('、');
+    const brands = Array.from(new Set((o.items || []).map((it) => it.ownerBrandName || it.brandName).filter(Boolean))).join('、');
+    const parts = [`${i + 1}. 订单号 ${o.orderNo}`, items, `状态：${orderStatusText(o)}`];
+    if (o.paidAt) parts.push(`付款时间 ${cnTime(o.paidAt)}`);
+    if (o.trackingNumber) parts.push(`物流：${o.shippingCarrier ? `${o.shippingCarrier} ` : ''}${o.trackingNumber}`);
+    else if (o.status === 'shipped' || o.status === 'delivered') parts.push('物流单号暂未录入');
+    if (brands) parts.push(`发货方：${brands}`);
+    lines.push(parts.filter(Boolean).join('｜'));
+  });
+  lines.push(`完整订单（需登录）：${KEFU_ORDERS_URL}`);
+  return lines.join('\n');
+}
+export function kefuSharedDeviceReply() {
+  return `商城里的共享设备属于投放合作，不标价、不能直接下单。有意向的话，请在商品页点「留资料洽谈」，或直接留言您的姓名、手机号和城市，客服同事会联系您洽谈。商城：${KEFU_SHOP_URL}`;
+}
+export function kefuAfterSaleReply(orders: KefuOrderLike[] | null) {
+  const lines = [
+    '已为您登记售后申请，并转给品牌方／售后同事处理，会尽快联系您。',
+    '商城商品由品牌方／工厂一件代发，能否退换以商品页说明和品牌方规则为准；确认退款后，款项按原支付方式（微信支付）退回。',
+  ];
+  if (orders && orders.length) lines.push(`您账号下最近的订单：${orders.slice(0, 3).map((o) => `${o.orderNo}（${orderStatusText(o)}）`).join('、')}。请回复是哪一笔和原因，方便我们处理。`);
+  else lines.push('方便的话请回复订单号和原因（可在「我的订单」' + KEFU_ORDERS_URL + ' 查看订单号）。');
+  return lines.join('\n');
+}
+
 export const KEFU_KNOWLEDGE = `
 【公司】对外主体：${KEFU_COMPANY}；服务号「糙米量子」。
 【设备】阿富同学：频率密码健康仪（AI 健康卫兵），到店扫码即用的非接触式频率养生（调理、康养）体验设备，是门店使用的产品与设备，不是同名个人 IP。
@@ -125,12 +190,22 @@ export const KEFU_KNOWLEDGE = `
 【使用前留意】${KEFU_SAFETY_ROWS.join(' ')}
 【常见问题】设备所有权归公司。3 个月内用不完以合同为准。阿富同学不是医疗设备，不作功效承诺。客人个人健康资料未经本人单独同意不用于推广或对外共享。设备坏了可通过服务号或电话报修。
 【资料】保险为中国人民财产保险（PICC）产品责任险，保单号 PZAI202645000000005472，保险期间 2026-07-10 至 2027-07-09；另有使用前注意事项、CE／EMC（EN 55014）证书、CNAS 波长检测报告样品信息页，由系统发链接。不报保额。
+【会员与登录】网站 ${KEFU_SITE} 登录：在微信里打开点「微信官方一键授权登录」；电脑上用手机微信扫码；也可以用手机号验证码或邮箱登录（登录页 ${KEFU_LOGIN_URL}）。登录后可在「我的订单」查看订单。
+【推荐与归属】注册时可以填推荐人邀请码（选填）。没填邀请码不等于归属"官方直属"；归属以您实际购买或体验的门店／推荐人为准，由客服核对确认，AI 不替客人确认归属。转发链接或介绍朋友的人，要在归属确认、并且朋友实际购买或体验之后，才算有效推荐。不讲分润、提成比例。
+【商城购物】商城 ${KEFU_SHOP_URL} 的商品都由品牌方／工厂直接一件代发；具体发货和到货时间以商品页说明为准，或咨询品牌方；发货后物流单号会显示在订单里。付款：下单后用微信支付（支付宝暂未开通）。查看订单：登录后打开「我的订单」${KEFU_ORDERS_URL}。资料里没有退换货规则、发货天数和商品价格，不要编。
+【售后】退货、退款、换货由系统登记售后并转给品牌方／售后同事处理；能否退换以商品页说明和品牌方规则为准；确认退款后按原支付方式（微信支付）退回。
+【共享设备】商城里的共享设备属于投放合作，不标价、不能直接下单，请在商品页点「留资料洽谈」或留言姓名、手机、城市。
+【品牌入驻】只对公司主体开放：在 ${KEFU_BRAND_APPLY_URL} 填写公司名称、统一社会信用代码，上传营业执照或公司登记文件，平台审核；品牌商品提交后需平台后台审核通过才会上架销售。个人不能入驻。
+【隐私】客人的订单、联系方式只有本人登录后可查看，客服不会在聊天里透露给他人；个人健康资料未经本人单独同意不用于推广或对外共享。
+【备案】网站 ICP 备案号：${KEFU_ICP}（${KEFU_COMPANY}）。
 【联系】服务号「糙米量子」，客服电话 ${KEFU_PHONE}。
 `.trim();
 
 export const KEFU_SYSTEM_PROMPT = `你是服务号「糙米量子」的 AI 客服，用简体中文回答，语气亲切、简短（不超过 150 字），不使用 Markdown。
-只根据下面的【资料】回答；资料里没有的、拿不准的、涉及投诉退款合同发票付款纠纷的，只输出：[[转人工]]
+只根据下面的【资料】回答；资料里没有的、拿不准的、涉及投诉纠纷合同发票付款失败的，只输出：[[转人工]]
 客人问设备是做什么的、怎么用、怎么体验、检测怎么做，属于正常产品问题，请根据资料直接介绍，不要转人工。
+客人问商城购物、付款、会员登录、推荐归属、品牌入驻、隐私、备案等网站规则，按资料直接回答，不要转人工。
+隐私、数据安全只按【隐私】原话回答，不要加资料以外的承诺或说法（例如加密、认证、按规范保护）。
 用词：介绍设备时用"频率养生""调理""康养""放松体验""健康评估"这类说法。
 回答里不要出现"治疗、治愈、疗效、诊断、康复、疗程、药效、根治"这些词，否定句也不要写（例如不要写"不治疗疾病""不诊断"）；如确实需要说明，只用这一句原话：阿富同学不是医疗设备。
 严格禁止：
@@ -227,6 +302,7 @@ const T2S: Record<string, string> = Object.fromEntries(
     '覺觉', '夢梦', '咳咳', '喉喉', '嚨咙', '膚肤', '傷伤', '疲疲', '勞劳', '關关', '節节', '盤盘', '腎肾', '臟脏', '氣气', '痠酸', '虛虚',
     '轉转', '話话', '電电', '費费', '價价', '錢钱', '買买', '門门', '號号', '線线', '請请', '謝谢', '嗎吗', '麼么', '怎怎', '樣样', '為为',
     '麗丽', '癢痒', '長长', '時时', '後后', '動动', '飯饭', '餓饿', '胃胃', '脹胀', '冰冰', '寫写', '覽览', '預预', '約约', '試试', '台台',
+    '訂订', '單单', '貨货', '換换', '員员', '碼码', '錄录', '運运', '遞递', '條条', '險险', '產产', '規规', '則则', '隱隐', '註注', '冊册', '歸归', '屬属', '薦荐', '權权', '認认', '證证', '帳账', '戶户', '郵邮', '簡简', '盡尽', '剛刚', '幾几', '馬马', '還还', '貨货', '儘尽',
     '蘇苏', '裏里', '裡里', '處处', '聯联', '繫系', '區区', '廣广', '東东', '蘭兰', '陽阳', '濟济', '圳圳', '慶庆', '漢汉', '廈厦', '鄭郑', '貴贵', '寧宁', '瀋沈', '連连', '無无', '嘉嘉', '紹绍', '溫温', '臺台',
   ].map((p) => [p[0], p[1]]),
 );

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 type Row = {
@@ -36,6 +36,11 @@ type Detail = {
   notifications: Array<{ id: string; at: string; reason: string; results: Array<{ channel: string; status: string; errcode?: string }> }>;
 };
 
+const ACTION_DONE: Record<string, string> = { takeover: '已接手人工（AI 暂停 12 小时）', release: '已交回 AI', close: '已标记处理' };
+function humanActive(c: { status: string; pausedUntil?: string | null }) {
+  return c.status === 'human' && !!c.pausedUntil && Date.parse(c.pausedUntil) > Date.now();
+}
+
 const STATUS_LABEL: Record<Row['status'], string> = { ai: 'AI 回复中', pending: '待人工', human: '人工处理中', closed: '已处理' };
 const STATUS_CLASS: Record<Row['status'], string> = {
   ai: 'bg-green-50 text-green-700',
@@ -69,6 +74,9 @@ function Inbox() {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const [notice, setNotice] = useState('');
+  useEffect(() => setNotice(''), [selected]);
   const [error, setError] = useState('');
 
   const loadList = useCallback(async () => {
@@ -96,9 +104,11 @@ function Inbox() {
   }, [selected, loadDetail]);
 
   const act = async (payload: Record<string, unknown>) => {
-    if (!selected) return;
+    if (!selected || busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setError('');
+    setNotice('');
     try {
       const res = await fetch('/api/admin/wechat-inbox', {
         method: 'POST',
@@ -108,8 +118,10 @@ function Inbox() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) setError(data.error || '操作失败');
       if (res.ok && payload.action === 'reply') setReply('');
+      if (res.ok && ACTION_DONE[String(payload.action)]) setNotice(`${ACTION_DONE[String(payload.action)]}${data.unchanged ? '（之前已是此状态）' : ''}`);
       await Promise.all([loadDetail(selected), loadList()]);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
@@ -167,9 +179,22 @@ function Inbox() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button disabled={busy} onClick={() => act({ action: 'takeover' })} className="btn-outline text-xs">接手人工</button>
-                  <button disabled={busy} onClick={() => act({ action: 'release' })} className="btn-outline text-xs">交回 AI</button>
-                  <button disabled={busy} onClick={() => act({ action: 'close' })} className="btn-outline text-xs">标记已处理</button>
+                  {humanActive(conv) ? (
+                    <span className="text-xs px-2 py-1 rounded bg-orange-50 text-orange-700">人工处理中</span>
+                  ) : (
+                    <button disabled={busy} onClick={() => act({ action: 'takeover' })} className="btn-outline text-xs">{busy ? '处理中…' : '接手人工'}</button>
+                  )}
+                  {conv.status === 'ai' ? (
+                    <span className="text-xs px-2 py-1 rounded bg-green-50 text-green-700">已交回 AI</span>
+                  ) : (
+                    <button disabled={busy} onClick={() => act({ action: 'release' })} className="btn-outline text-xs">{busy ? '处理中…' : '交回 AI'}</button>
+                  )}
+                  {conv.status === 'closed' ? (
+                    <span className="text-xs px-2 py-1 rounded bg-gray-100 text-gray-600">已标记处理</span>
+                  ) : (
+                    <button disabled={busy} onClick={() => act({ action: 'close' })} className="btn-outline text-xs">{busy ? '处理中…' : '标记已处理'}</button>
+                  )}
+                  {notice && <span className="text-xs text-green-700 self-center">✓ {notice}</span>}
                 </div>
               </div>
 
