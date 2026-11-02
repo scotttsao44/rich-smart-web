@@ -24,8 +24,8 @@ type Locale = 'zh-CN' | 'zh-TW';
 
 const supportContact = {
   serviceName: '糙米健康服务',
-  phone: '400-000-9318',
-  wechatOfficialName: '信海9318',
+  phone: '15862501498',
+  wechatOfficialName: '糙米量子',
   wechatQr: '/wechat-official-qr.jpg',
 };
 

@@ -160,13 +160,13 @@ export default function LoginPage() {
                 <div className="relative mx-auto h-24 w-24 overflow-hidden rounded-lg">
                   <Image
                     src="/wechat-official-qr.jpg"
-                    alt="信海9318 微信公众号二维码"
+                    alt="糙米量子 微信公众号二维码"
                     fill
                     sizes="96px"
                     className="object-cover"
                   />
                 </div>
-                <p className="mt-2 font-semibold text-gray-900">微信公众号：信海9318</p>
+                <p className="mt-2 font-semibold text-gray-900">微信公众号：糙米量子</p>
                 <p className="mt-1 text-xs text-gray-500">微信掃码关注，后续接收大陆站服务通知</p>
               </div>
             </div>

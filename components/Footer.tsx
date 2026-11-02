@@ -58,7 +58,7 @@ export default function Footer() {
             <ul className="space-y-2 text-sm text-gray-500">
               <li className="flex items-center gap-2">
                 <Phone size={14} className="text-amber-600" />
-                客服：400-000-9318
+                客服：15862501498
               </li>
               <li className="flex items-center gap-2">
                 <Mail size={14} className="text-amber-600" />
