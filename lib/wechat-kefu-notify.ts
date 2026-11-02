@@ -33,7 +33,7 @@ function shortText(text: string, max: number) {
 }
 
 export function isSimulatedOpenid(openid: string) {
-  return openid.startsWith('SIMULATED_');
+  return openid.startsWith('SIMULATED_') || openid.startsWith('SIMKB_');
 }
 
 export async function notifyKefuHandoff(conv: KefuConversation, reason: string, lastText: string, opts: { force?: boolean; detail?: string } = {}) {
