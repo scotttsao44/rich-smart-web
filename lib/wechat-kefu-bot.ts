@@ -12,16 +12,22 @@ import {
   KEFU_ATTRIBUTION_QUESTION,
   KEFU_GREETING,
   KEFU_HANDOFF_REPLY,
-  KEFU_HEALTH_FALLBACK_LINKS,
+  KEFU_HEALTH_BAD_HOST,
+  KEFU_HEALTH_BAD_TITLE,
+  KEFU_HEALTH_HOSPITAL_SITE,
   KEFU_MEDIA_REPLY,
   KEFU_NOT_MEDICAL,
   KEFU_SEE_DOCTOR,
   KEFU_SYSTEM_PROMPT,
   KEFU_WELCOME,
   isAllowedHealthUrl,
-  kefuReplyViolates,
+  kefuBlockedTerm,
+  kefuCuratedHealthLinks,
   kefuSafetyReply,
+  kefuSymptomKeyword,
   kefuTierReply,
+  kefuTitleMatches,
+  kefuToSimplified,
 } from '@/lib/wechat-kefu-knowledge';
 import { isSimulatedOpenid, notifyKefuHandoff } from '@/lib/wechat-kefu-notify';
 import { sendMpCustomText } from '@/lib/wechat-mp-api';
@@ -91,7 +97,7 @@ function dashscopeKey() {
   return String(process.env.DASHSCOPE_API_KEY || '').trim();
 }
 
-async function askQwen(conv: KefuConversation | null, userText: string): Promise<string | null> {
+async function askQwen(conv: KefuConversation | null, userText: string, retryHint?: string): Promise<string | null> {
   const key = dashscopeKey();
   if (!key) return null;
   const base = String(process.env.DASHSCOPE_TEXT_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/$/, '');
@@ -107,7 +113,12 @@ async function askQwen(conv: KefuConversation | null, userText: string): Promise
         model: process.env.KEFU_AI_MODEL || 'qwen-plus',
         temperature: 0.3,
         max_tokens: 300,
-        messages: [{ role: 'system', content: KEFU_SYSTEM_PROMPT }, ...history, { role: 'user', content: userText.slice(0, 500) }],
+        messages: [
+          { role: 'system', content: KEFU_SYSTEM_PROMPT },
+          ...history,
+          { role: 'user', content: userText.slice(0, 500) },
+          ...(retryHint ? [{ role: 'system', content: retryHint }] : []),
+        ],
       }),
       signal: AbortSignal.timeout(15000),
     });
@@ -124,14 +135,23 @@ async function askQwen(conv: KefuConversation | null, userText: string): Promise
   }
 }
 
-type HealthLink = { title: string; url: string };
+type HealthLink = { title: string; source: string; url: string };
 
-async function searchHealthLinks(userText: string): Promise<HealthLink[]> {
+function cleanTitle(raw: string) {
+  return String(raw || '')
+    .replace(/【官方编[码号][:：]?\d+】/g, '')
+    .split(/\s+[-|_]\s+|_/)[0]
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 48);
+}
+
+// 症状关键词 + 「科普」联网搜索，只留权威来源、标题对题的科普文章（不要发布会实录、政策通知、广告）
+async function searchHealthLinks(keyword: string): Promise<HealthLink[]> {
   const key = dashscopeKey();
-  if (!key) return [];
+  if (!key || !keyword) return [];
   const base = String(process.env.DASHSCOPE_NATIVE_BASE_URL || 'https://dashscope.aliyuncs.com/api/v1').replace(/\/$/, '');
-  const topic = userText.replace(/[\r\n]+/g, ' ').slice(0, 40);
-  const queries = [`${topic} 国家卫生健康委员会 健康科普`, `${topic} 三甲医院 健康科普`];
+  const queries = [`${keyword} 科普`, `${keyword} 健康科普 医院`, `${keyword} 健康科普 卫生健康委`];
   const run = async (q: string) => {
     try {
       const res = await fetch(`${base}/services/aigc/text-generation/generation`, {
@@ -158,25 +178,55 @@ async function searchHealthLinks(userText: string): Promise<HealthLink[]> {
   };
   const all = (await Promise.all(queries.map(run))).flat();
   const seen = new Set<string>();
-  const out: HealthLink[] = [];
+  const ranked: Array<HealthLink & { rank: number }> = [];
   for (const r of all) {
     const url = String(r?.url || '').trim();
-    if (!url || seen.has(url) || !isAllowedHealthUrl(url)) continue;
+    if (!url || seen.has(url)) continue;
     seen.add(url);
-    const title = String(r?.title || r?.site_name || '权威科普资料').replace(/\s+/g, ' ').trim().slice(0, 40);
-    out.push({ title, url });
-    if (out.length >= 3) break;
+    let host = '';
+    try {
+      const u = new URL(url);
+      if (u.protocol !== 'https:' && u.protocol !== 'http:') continue;
+      host = u.hostname.toLowerCase();
+    } catch {
+      continue;
+    }
+    const site = String(r?.site_name || '').trim();
+    const rawTitle = String(r?.title || '');
+    const whitelisted = isAllowedHealthUrl(url);
+    const hospital = !KEFU_HEALTH_BAD_HOST.test(host) && KEFU_HEALTH_HOSPITAL_SITE.test(site);
+    if (!whitelisted && !hospital) continue;
+    if (KEFU_HEALTH_BAD_TITLE.test(rawTitle)) continue;
+    const title = cleanTitle(rawTitle);
+    if (!title || !kefuTitleMatches(title, keyword)) continue;
+    const kepu = /(jkkp|kepu|kpzs|kpxc|\/kp\/)/i.test(url) || /科普/.test(rawTitle);
+    ranked.push({ title, source: site && site !== '无' ? site.slice(0, 20) : host, url, rank: (whitelisted ? 0 : 2) + (kepu ? 0 : 1) });
   }
-  return out;
+  return ranked
+    .sort((x, y) => x.rank - y.rank)
+    .slice(0, 3)
+    .map(({ title, source, url }) => ({ title, source, url }));
 }
 
-function healthReply(links: HealthLink[], fallback: boolean) {
-  const list = (links.length ? links : KEFU_HEALTH_FALLBACK_LINKS).map((l, i) => `${i + 1}. ${l.title}\n${l.url}`);
+function healthReply(keyword: string, found: HealthLink[]) {
+  const links = [...found];
+  if (links.length < 2) {
+    for (const c of kefuCuratedHealthLinks(keyword)) {
+      if (links.length >= 2) break;
+      if (!links.some((l) => l.url === c.url)) links.push(c);
+    }
+  }
+  const topic = keyword ? `关于「${keyword}」，` : '';
+  if (!links.length) {
+    return [
+      `${topic}这类身体状况我们不做判断。暂时没找到与此直接相关的权威科普文章，建议到正规医院相关科室咨询。`,
+      `${KEFU_SEE_DOCTOR}。`,
+      KEFU_NOT_MEDICAL,
+    ].join('\n');
+  }
   return [
-    fallback || !links.length
-      ? '这类身体状况的问题，我们不做判断。暂时没找到对应的权威科普文章，您可以在以下官方网站查阅：'
-      : '这类身体状况的问题，我们不做判断。以下是权威机构公开的健康科普资料，请点开阅读：',
-    ...list,
+    `${topic}这类身体状况我们不做判断。以下是权威机构公开的科普文章，请点开阅读：`,
+    ...links.map((l, i) => `${i + 1}. ${l.title}（${l.source}）\n${l.url}`),
     `${KEFU_SEE_DOCTOR}。`,
     KEFU_NOT_MEDICAL,
   ].join('\n');
@@ -205,7 +255,8 @@ function raceDeadline<T>(p: Promise<T>, deadline: number): Promise<{ done: true;
 
 async function handleText(openid: string, text: string, deadline: number): Promise<string | null> {
   let conv = getKefuConversation(openid);
-  const c = clean(text);
+  const simple = kefuToSimplified(text);
+  const c = clean(simple);
   if (conv?.status === 'closed') conv = updateKefuConversation(openid, (x) => { x.status = 'ai'; });
 
   if (conv && (conv.status === 'pending' || conv.status === 'human') && conv.pausedUntil && Date.parse(conv.pausedUntil) > Date.now()) {
@@ -214,7 +265,7 @@ async function handleText(openid: string, text: string, deadline: number): Promi
     return null;
   }
 
-  if (conv?.attribution.status === 'asked' && !RE_HUMAN.test(text) && !/[?？吗呢]$/.test(text.trim()) && c.length <= 60) {
+  if (conv?.attribution.status === 'asked' && !RE_HUMAN.test(simple) && !/[?？吗呢]$/.test(text.trim()) && c.length <= 60) {
     updateKefuConversation(openid, (x) => {
       x.attribution = { ...x.attribution, status: 'pending_review', answer: text.slice(0, 200) };
       if (!x.tags.includes('attribution')) x.tags.push('attribution');
@@ -222,22 +273,23 @@ async function handleText(openid: string, text: string, deadline: number): Promi
     return passive(openid, '谢谢您，已记录，客服同事会核对后与您联系。还有其他问题可以继续问我。', 'attribution');
   }
 
-  if (RE_HUMAN.test(text)) {
+  if (RE_HUMAN.test(simple)) {
     handoff(openid, '客人要求人工 / 售后纠纷', text, true);
     return passive(openid, KEFU_HANDOFF_REPLY, 'handoff');
   }
 
   if (RE_GREETING.test(c)) return passive(openid, KEFU_GREETING, 'greeting');
 
-  if (RE_SUITABILITY.test(text)) return passive(openid, kefuSafetyReply(), 'safety');
+  if (RE_SUITABILITY.test(simple)) return passive(openid, kefuSafetyReply(), 'safety');
 
-  if (RE_SYMPTOM.test(text)) {
+  if (RE_SYMPTOM.test(simple)) {
     updateKefuConversation(openid, (x) => {
       if (!x.tags.includes('health')) x.tags.push('health');
     });
     const task = (async () => {
-      const links = aiCallAllowed(openid) ? await searchHealthLinks(text) : [];
-      return healthReply(links, false);
+      const keyword = kefuSymptomKeyword(text);
+      const links = aiCallAllowed(openid) ? await searchHealthLinks(keyword) : [];
+      return healthReply(keyword, links);
     })();
     const r = await raceDeadline(task, deadline);
     if (r.done) return passive(openid, r.value, 'health');
@@ -245,7 +297,7 @@ async function handleText(openid: string, text: string, deadline: number): Promi
     return passive(openid, `这类身体状况的问题，我们不做判断。正在为您查找卫健委等权威机构的公开科普资料，稍后发给您。\n${KEFU_SEE_DOCTOR}。`, 'health_ack');
   }
 
-  if (RE_PRICE.test(text)) return passive(openid, withAttribution(openid, kefuTierReply(), text), 'price');
+  if (RE_PRICE.test(simple)) return passive(openid, withAttribution(openid, kefuTierReply(), simple), 'price');
 
   if (!dashscopeKey() || !aiCallAllowed(openid)) {
     handoff(openid, dashscopeKey() ? 'AI 调用次数超限' : 'AI 未配置', text, false);
@@ -253,12 +305,28 @@ async function handleText(openid: string, text: string, deadline: number): Promi
   }
 
   const task = (async () => {
-    const answer = await askQwen(getKefuConversation(openid), text);
-    if (!answer || answer.includes('[[转人工]]') || kefuReplyViolates(answer)) {
+    let answer = await askQwen(getKefuConversation(openid), text);
+    let blocked = answer && !answer.includes('[[转人工]]') ? kefuBlockedTerm(answer) : null;
+    if (answer && blocked) {
+      // 被合规拦截：留存草稿供后台查看，提示换说法后重试一次
+      console.warn('[wechat-kefu] ai reply blocked, term=', blocked, '; retrying once');
+      appendKefuMessage(openid, { role: 'system', type: 'ai_blocked', text: `AI 草稿被合规拦截（命中「${blocked}」），已自动重写：${answer.slice(0, 400)}` });
+      answer = await askQwen(
+        getKefuConversation(openid),
+        text,
+        `你上一版回答里出现了不允许的词「${blocked}」。请重新回答客人的同一个问题，不要出现「${blocked}」以及治疗、治愈、疗效、诊断、康复、疗程、药效等词（否定句也不要写），改用「频率养生」「调理」「康养」「放松体验」等说法；仍按资料回答，不超过 150 字。`,
+      );
+      blocked = answer && !answer.includes('[[转人工]]') ? kefuBlockedTerm(answer) : null;
+      if (answer && blocked) {
+        console.warn('[wechat-kefu] ai retry still blocked, term=', blocked);
+        appendKefuMessage(openid, { role: 'system', type: 'ai_blocked', text: `AI 重写仍被合规拦截（命中「${blocked}」）：${answer.slice(0, 400)}` });
+      }
+    }
+    if (!answer || answer.includes('[[转人工]]') || blocked) {
       handoff(openid, !answer ? 'AI 无回应' : answer.includes('[[转人工]]') ? 'AI 无把握' : 'AI 回答被合规拦截', text, false);
       return { text: KEFU_HANDOFF_REPLY, tag: 'handoff' };
     }
-    return { text: withAttribution(openid, answer.replace(/\*\*/g, ''), text), tag: 'ai' };
+    return { text: withAttribution(openid, answer.replace(/\*\*/g, ''), simple), tag: 'ai' };
   })();
   const r = await raceDeadline(task, deadline);
   if (r.done) return passive(openid, r.value.text, r.value.tag);

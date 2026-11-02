@@ -3,7 +3,8 @@ import { findLocalCnUserById } from '@/lib/local-cn-users';
 import { recordKefuNotification, type KefuConversation } from '@/lib/local-cn-wechat-kefu';
 import { sendMpCustomText, sendMpTemplate } from '@/lib/wechat-mp-api';
 
-// 转人工通知：发给 KEFU_NOTIFY_MEMBER_IDS（逗号分隔的会员 ID，例如曹总）。
+// 转人工通知：发给 KEFU_NOTIFY_OPENIDS（逗号分隔的服务号 openid，只走微信，不发 Email）
+// 以及 KEFU_NOTIFY_MEMBER_IDS（逗号分隔的会员 ID，微信 + Email）。
 // 渠道：1) 服务号模板消息（配置 WECHAT_KEFU_NOTIFY_TEMPLATE_ID 后启用）；
 //       2) 否则服务号客服消息（对方 48 小时内与服务号有过互动才会成功）；
 //       3) Email（SMTP 已配置且会员有真实邮箱时）。
@@ -51,6 +52,25 @@ export async function notifyKefuHandoff(conv: KefuConversation, reason: string, 
   const templateKeys = String(process.env.WECHAT_KEFU_NOTIFY_TEMPLATE_KEYS || 'thing1,thing2,time3').split(',').map((s) => s.trim());
 
   const results: Array<{ memberId: number; channel: string; status: string; errcode?: string }> = [];
+  const directOpenids = String(process.env.KEFU_NOTIFY_OPENIDS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => /^[A-Za-z0-9_-]{10,64}$/.test(s));
+  for (const openid of directOpenids) {
+    if (simulated) {
+      results.push({ memberId: 0, channel: templateId ? 'template' : 'custom', status: 'simulated' });
+    } else if (templateId) {
+      const r = await sendMpTemplate(openid, templateId, link, {
+        [templateKeys[0] || 'thing1']: shortText(who, 18),
+        [templateKeys[1] || 'thing2']: summary,
+        [templateKeys[2] || 'time3']: time,
+      });
+      results.push({ memberId: 0, channel: 'template', status: r.ok ? 'sent' : 'failed', errcode: r.ok ? undefined : String(r.errcode) });
+    } else {
+      const r = await sendMpCustomText(openid, body);
+      results.push({ memberId: 0, channel: 'custom', status: r.ok ? 'sent' : 'failed', errcode: r.ok ? undefined : String(r.errcode) });
+    }
+  }
   for (const memberId of ids) {
     const user = findLocalCnUserById(memberId);
     if (!user) {
@@ -97,6 +117,6 @@ export async function notifyKefuHandoff(conv: KefuConversation, reason: string, 
       }
     }
   }
-  if (!ids.length) results.push({ memberId: 0, channel: 'config', status: 'no_recipients' });
+  if (!ids.length && !directOpenids.length) results.push({ memberId: 0, channel: 'config', status: 'no_recipients' });
   return recordKefuNotification({ openid: conv.openid, reason, results });
 }
