@@ -36,7 +36,7 @@ export function isSimulatedOpenid(openid: string) {
   return openid.startsWith('SIMULATED_');
 }
 
-export async function notifyKefuHandoff(conv: KefuConversation, reason: string, lastText: string, opts: { force?: boolean } = {}) {
+export async function notifyKefuHandoff(conv: KefuConversation, reason: string, lastText: string, opts: { force?: boolean; detail?: string } = {}) {
   if (!opts.force && conv.lastNotifiedAt && Date.now() - Date.parse(conv.lastNotifiedAt) < THROTTLE_MS) return null;
   const ids = String(process.env.KEFU_NOTIFY_MEMBER_IDS || '')
     .split(',')
@@ -46,8 +46,8 @@ export async function notifyKefuHandoff(conv: KefuConversation, reason: string, 
   const link = `${appUrl()}/admin/wechat-inbox?openid=${encodeURIComponent(conv.openid)}`;
   const who = conv.memberName || `访客 ${conv.openid.slice(-6)}`;
   const time = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
-  const summary = shortText(lastText || '(非文字消息)', 18);
-  const body = `【糙米量子客服】有客人需要人工处理\n客人：${who}\n原因：${reason}\n内容：${shortText(lastText || '(非文字消息)', 80)}\n时间：${time}\n处理：${link}`;
+  const summary = shortText(opts.detail || lastText || '(非文字消息)', 18);
+  const body = `【糙米量子客服】有客人需要人工处理\n客人：${who}\n原因：${reason}\n${opts.detail ? `线索：${opts.detail}\n` : ''}内容：${shortText(lastText || '(非文字消息)', 80)}\n时间：${time}\n处理：${link}`;
   const templateId = process.env.WECHAT_KEFU_NOTIFY_TEMPLATE_ID || '';
   const templateKeys = String(process.env.WECHAT_KEFU_NOTIFY_TEMPLATE_KEYS || 'thing1,thing2,time3').split(',').map((s) => s.trim());
 

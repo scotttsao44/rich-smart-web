@@ -17,6 +17,7 @@ import {
   KEFU_HEALTH_HOSPITAL_SITE,
   KEFU_MEDIA_REPLY,
   KEFU_NOT_MEDICAL,
+  KEFU_PHONE,
   KEFU_SEE_DOCTOR,
   KEFU_SYSTEM_PROMPT,
   KEFU_WELCOME,
@@ -49,6 +50,11 @@ const RE_DOCS = /(保险|保单|责任险|使用说明|说明书|使用手册|�
 const RE_APPLY = /(怎么申请|如何申请|怎样申请|想申请|要申请|申请机器|申请设备|申请合作|申请流程|申请条件|怎么合作|如何合作|想合作|要合作|加盟|投放机器|怎么拿到机器|想要机器|要台机器)/;
 const RE_PRICE = /(多少钱|价格|价钱|费用|收费|次卡|几档|报价|怎么收费)/;
 const RE_BUSINESS = /(合作|加盟|申请|代理|次卡|开店|门店|投放|多少钱|价格|费用|购买|买|入驻|机器)/;
+// 线索：客人留大陆手机号，或明确想到店体验／找门店／预约 → 通知客服（不暂停 AI）
+const RE_MOBILE = /(?<!\d)1[3-9]\d{9}(?!\d)/;
+const RE_VISIT = /(要去体验|想去体验|想体验|要体验|去体验|哪里体验|哪里可以体验|哪里能体验|哪能体验|哪儿体验|在哪体验|在哪里体验|去哪体验|门店在哪|店在哪|哪里有门店|哪有门店|哪里有店|有没有门店|附近门店|附近的门店|最近的门店|体验店|预约)/;
+const LEAD_THROTTLE_MS = 30 * 60 * 1000;
+const KEFU_CITIES = '北京 上海 天津 重庆 广州 深圳 苏州 杭州 南京 无锡 常州 南通 扬州 镇江 徐州 盐城 泰州 淮安 连云港 宿迁 昆山 常熟 张家港 太仓 江阴 宜兴 宁波 温州 嘉兴 湖州 绍兴 金华 义乌 台州 舟山 丽水 衢州 合肥 芜湖 福州 厦门 泉州 漳州 莆田 平潭 济南 青岛 烟台 潍坊 临沂 郑州 洛阳 武汉 长沙 南昌 成都 西安 昆明 贵阳 南宁 海口 三亚 石家庄 太原 呼和浩特 沈阳 大连 长春 哈尔滨 兰州 西宁 银川 乌鲁木齐 拉萨 东莞 佛山 珠海 中山 惠州 汕头'.split(' ');
 
 function clean(text: string) {
   return String(text || '').replace(/[\s，,。.!！?？~～、]+/g, '');
@@ -65,6 +71,7 @@ function linkMember(conv: KefuConversation) {
 }
 
 async function deliverAsync(openid: string, text: string, tag: string) {
+  text = phoneOnce(openid, text);
   const { message } = appendKefuMessage(openid, { role: 'ai', type: 'text', text, tag, delivery: 'none' });
   if (isSimulatedOpenid(openid)) {
     setKefuMessageDelivery(openid, message.id, 'simulated');
@@ -74,7 +81,58 @@ async function deliverAsync(openid: string, text: string, tag: string) {
   setKefuMessageDelivery(openid, message.id, r.ok ? 'custom' : 'failed', r.ok ? undefined : String(r.errcode));
 }
 
+// 客服电话每段对话最多主动提一次：之前的 AI 回复里已给过电话，就把含电话的分句去掉
+function phoneOnce(openid: string, text: string) {
+  if (!text.includes(KEFU_PHONE)) return text;
+  const conv = getKefuConversation(openid);
+  if (!conv?.messages.some((m) => m.role === 'ai' && m.text.includes(KEFU_PHONE))) return text;
+  const clause = new RegExp(`[，,；;]?[^，,；;。！!？?\\n]*${KEFU_PHONE}[^，,；;。！!？?\\n]*`, 'g');
+  return text
+    .split('\n')
+    .flatMap((line) => {
+      if (!line.includes(KEFU_PHONE)) return [line];
+      const out = line.replace(clause, '').replace(/([。！？!?])[。！？!?，,；;]+/g, '$1').replace(/^[，,；;。！!？?\s]+/, '').trim();
+      return out ? [out] : [];
+    })
+    .join('\n');
+}
+
+function leadInfo(openid: string, simple: string) {
+  const conv = getKefuConversation(openid);
+  const texts = [simple, ...(conv?.messages || []).filter((m) => m.role === 'user' && m.type === 'text').slice(-8).reverse().map((m) => kefuToSimplified(m.text))];
+  const digits = (t: string) => t.replace(/[\s-]/g, '');
+  const phoneNow = digits(simple).match(RE_MOBILE)?.[0] || '';
+  const phone = phoneNow || texts.map((t) => digits(t).match(RE_MOBILE)?.[0]).find(Boolean) || '';
+  let city = '';
+  for (const t of texts) {
+    city = KEFU_CITIES.find((x) => t.includes(x)) || t.match(/我在([\u4e00-\u9fa5]{2,4}?)(?:市|这边|附近|要|想|的|[，,。\s]|$)/)?.[1] || '';
+    if (city) break;
+  }
+  return { phone, phoneNow, city };
+}
+
+// 线索通知：同一对话同一线索 30 分钟内只通知一次；always＝来源待核对等一次性事件，必发
+function notifyLead(openid: string, simple: string, text: string, reason: string, always = false) {
+  const { phone, city } = leadInfo(openid, simple);
+  const key = phone ? `lead:${phone}` : 'lead:visit';
+  const conv = getKefuConversation(openid);
+  if (!conv) return;
+  const last = [...conv.messages].reverse().find((m) => m.role === 'system' && m.type === 'lead_notify' && m.tag === key);
+  if (!always && last && Date.now() - Date.parse(last.at) < LEAD_THROTTLE_MS) return;
+  const detail = `城市：${city || '未提供'}；手机：${phone || '未提供'}`;
+  appendKefuMessage(openid, { role: 'system', type: 'lead_notify', tag: key, text: `已通知客服：${reason}（${detail}）` });
+  const fresh = getKefuConversation(openid);
+  if (fresh) notifyKefuHandoff(fresh, reason, text, { force: true, detail }).catch(() => console.warn('[wechat-kefu] lead notify error'));
+}
+
+function leadReply(phone: string, city: string) {
+  if (phone) return `已收到您的联系方式，已转给客服同事，会尽快与您联系，帮您安排${city ? `${city}的` : '就近'}体验。`;
+  if (city) return `好的，麻烦留一下您的手机号，客服同事会尽快联系您，帮您安排${city}的体验。`;
+  return '想到店体验的话，麻烦留言您的城市和手机号（例如：苏州 138xxxxxxxx），客服同事会尽快联系您安排。';
+}
+
 function passive(openid: string, text: string, tag: string) {
+  text = phoneOnce(openid, text);
   appendKefuMessage(openid, { role: 'ai', type: 'text', text, tag, delivery: 'passive' });
   return text;
 }
@@ -270,13 +328,18 @@ async function handleText(openid: string, text: string, deadline: number): Promi
     return null;
   }
 
-  if (conv?.attribution.status === 'asked' && !RE_HUMAN.test(simple) && !/[?？吗呢]$/.test(text.trim()) && c.length <= 60) {
+  if (conv?.attribution.status === 'asked' && !RE_HUMAN.test(simple) && !RE_VISIT.test(simple) && !RE_MOBILE.test(text.replace(/[\s-]/g, '')) && !/[?？吗呢]$/.test(text.trim()) && c.length <= 60) {
     updateKefuConversation(openid, (x) => {
       x.attribution = { ...x.attribution, status: 'pending_review', answer: text.slice(0, 200) };
       if (!x.tags.includes('attribution')) x.tags.push('attribution');
     });
+    notifyLead(openid, simple, text, `客人回答来源（待核对）：${text.slice(0, 30)}`, true);
     return passive(openid, '谢谢您，已记录，客服同事会核对后与您联系。还有其他问题可以继续问我。', 'attribution');
   }
+
+  const lead = leadInfo(openid, simple);
+  const wantsVisit = RE_VISIT.test(simple);
+  if (lead.phoneNow || wantsVisit) notifyLead(openid, simple, text, lead.phone ? '客人留电话/想体验' : '客人想体验/找门店');
 
   if (RE_HUMAN.test(simple)) {
     handoff(openid, '客人要求人工 / 售后纠纷', text, true);
@@ -287,11 +350,11 @@ async function handleText(openid: string, text: string, deadline: number): Promi
 
   if (RE_DOCS.test(simple)) {
     const keys: KefuDocKey[] = [];
-    if (/(保险|保单|责任险)/.test(simple)) keys.push('insurance');
+    if (/(保险|保单|责任险)/.test(simple)) keys.push('insurance', 'insurancePolicy');
     if (/(使用说明|说明书|使用手册)/.test(simple)) keys.push('usage');
     if (/(检测报告|检验报告|测试报告|波长|(?<![A-Za-z])CNAS(?![A-Za-z]))/i.test(simple)) keys.push('wavelength', 'emc');
     if (/(?<![A-Za-z])(?:CE|EMC)(?![A-Za-z])/i.test(simple)) keys.push('emc');
-    if (/(资质|证书|证照|认证)/.test(simple)) keys.push('emc', 'wavelength', 'insurance');
+    if (/(资质|证书|证照|认证)/.test(simple)) keys.push('emc', 'wavelength', 'insurance', 'insurancePolicy');
     return passive(openid, kefuDocsReply(keys), 'docs');
   }
 
@@ -311,6 +374,8 @@ async function handleText(openid: string, text: string, deadline: number): Promi
     task.then((reply) => deliverAsync(openid, reply, 'health')).catch(() => console.warn('[wechat-kefu] health async error'));
     return passive(openid, `这类身体状况的问题，我们不做判断。正在为您查找卫健委等权威机构的公开科普资料，稍后发给您。\n${KEFU_SEE_DOCTOR}。`, 'health_ack');
   }
+
+  if (lead.phoneNow || wantsVisit) return passive(openid, leadReply(lead.phone, lead.city), 'lead');
 
   if (RE_APPLY.test(simple)) return passive(openid, withAttribution(openid, kefuApplyReply(), simple), 'apply');
 
