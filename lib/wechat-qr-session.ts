@@ -4,13 +4,14 @@ import { randomBytes } from 'crypto';
 
 export type WechatQrSession = {
   sid: string;
-  status: 'pending' | 'scanned' | 'confirmed' | 'expired';
+  status: 'pending' | 'scanned' | 'confirmed' | 'expired' | 'consumed';
   referrerCode: string;
   returnTo: string;
   createdAt: number;
   expiresAt: number;
   scannedAt?: number;
   confirmedAt?: number;
+  consumedAt?: number;
   memberId?: number;
   wxIdentityToken?: string;
   nickname?: string;
@@ -66,7 +67,7 @@ export function getWechatQrSession(sid: string): WechatQrSession | null {
   const sessions = readSessions();
   const session = sessions.find((s) => s.sid === cleanSid) || null;
   if (!session) return null;
-  if (Date.now() > session.expiresAt && session.status !== 'confirmed') {
+  if (Date.now() > session.expiresAt && session.status !== 'expired' && session.status !== 'consumed') {
     session.status = 'expired';
     writeSessions(sessions);
   }
@@ -79,7 +80,7 @@ export function markWechatQrSessionScanned(sid: string, nicknameHint?: string): 
   const sessions = readSessions();
   const session = sessions.find((s) => s.sid === cleanSid) || null;
   if (!session) return null;
-  if (Date.now() > session.expiresAt && session.status !== 'confirmed') {
+  if (Date.now() > session.expiresAt && session.status !== 'expired' && session.status !== 'consumed') {
     session.status = 'expired';
     writeSessions(sessions);
     return session;
@@ -104,11 +105,31 @@ export function confirmWechatQrSession(
   const sessions = readSessions();
   const session = sessions.find((s) => s.sid === cleanSid) || null;
   if (!session) return null;
+  if (Date.now() > session.expiresAt || session.status === 'expired' || session.status === 'consumed') return null;
   session.status = 'confirmed';
   session.confirmedAt = Date.now();
   session.memberId = input.memberId;
   if (input.wxIdentityToken) session.wxIdentityToken = input.wxIdentityToken;
   if (input.nickname) session.nickname = String(input.nickname).trim().slice(0, 80);
+  writeSessions(sessions);
+  return session;
+}
+
+// 扫码会话只能兑换一次登录 Cookie：首次读取 confirmed 即标记 consumed；过期一律拒绝
+export function consumeConfirmedWechatQrSession(sid: string): WechatQrSession | null {
+  const cleanSid = String(sid || '').trim();
+  if (!cleanSid) return null;
+  const sessions = readSessions();
+  const session = sessions.find((s) => s.sid === cleanSid) || null;
+  if (!session || session.status !== 'confirmed' || !session.memberId || session.consumedAt) return null;
+  if (Date.now() > session.expiresAt) {
+    session.status = 'expired';
+    writeSessions(sessions);
+    return null;
+  }
+  session.status = 'consumed';
+  session.consumedAt = Date.now();
+  delete session.wxIdentityToken;
   writeSessions(sessions);
   return session;
 }

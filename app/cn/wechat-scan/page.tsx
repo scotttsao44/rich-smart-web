@@ -16,6 +16,9 @@ function WechatScanConfirmInner() {
   const [officialConfigured, setOfficialConfigured] = useState(false);
   const [status, setStatus] = useState<'ready' | 'confirming' | 'confirmed' | 'expired' | 'error'>('ready');
   const [errorMessage, setErrorMessage] = useState('');
+  // 扫码链接在微信内自动跳转授权：期间不显示「允许登录」按钮，避免重复发起授权
+  const [autoRedirecting, setAutoRedirecting] = useState(Boolean(sid));
+  const [fallbackUrl, setFallbackUrl] = useState('');
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -26,6 +29,8 @@ function WechatScanConfirmInner() {
       }
     }
     if (!sid) return;
+    if (!/micromessenger/i.test(navigator.userAgent || '')) setAutoRedirecting(false);
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
     fetch('/api/auth/wechat/qr-session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -37,7 +42,8 @@ function WechatScanConfirmInner() {
     })
       .then((res) => res.json())
       .then((data) => {
-        if (data.session?.status === 'expired') {
+        if (data.session?.status === 'expired' || data.session?.status === 'consumed') {
+          setAutoRedirecting(false);
           setStatus('expired');
           return;
         }
@@ -47,15 +53,21 @@ function WechatScanConfirmInner() {
           qs.set('returnTo', `/cn/member?sid=${encodeURIComponent(sid)}`);
           const ref = String(data.referrerCode || refFromUrl || '').trim();
           if (ref) qs.set('ref', ref);
-          window.location.replace(`/api/auth/wechat/official/start?${qs.toString()}`);
+          const startUrl = `/api/auth/wechat/official/start?${qs.toString()}`;
+          fallbackTimer = setTimeout(() => setFallbackUrl(startUrl), 5000);
+          window.location.replace(startUrl);
           return;
         }
+        setAutoRedirecting(false);
         if (data.referrerName) setReferrerName(data.referrerName);
         if (data.referrerCode) setReferrerCode(data.referrerCode);
       })
       .catch(() => {
-        // ignore
+        setAutoRedirecting(false);
       });
+    return () => {
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+    };
   }, [sid, refFromUrl]);
 
   const handleConfirm = async () => {
@@ -141,6 +153,15 @@ function WechatScanConfirmInner() {
             <div className="py-6 text-center space-y-3">
               <p className="text-base font-bold text-amber-800">二维码已过期</p>
               <p className="text-xs text-slate-600">请在电脑端登录页点击「刷新二维码」后重新扫描。</p>
+            </div>
+          ) : autoRedirecting ? (
+            <div className="py-6 text-center space-y-3">
+              <p className="text-base font-bold text-emerald-800">正在跳转微信授权…</p>
+              {fallbackUrl && (
+                <a href={fallbackUrl} className="inline-block text-xs text-slate-500 underline">
+                  如未自动跳转，请点此继续
+                </a>
+              )}
             </div>
           ) : (
             <>

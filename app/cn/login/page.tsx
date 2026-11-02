@@ -132,22 +132,32 @@ function CnLoginForm() {
     createQrCodeSession();
   }, [createQrCodeSession]);
 
-  // Poll QR session status every 2 seconds
+  // Poll QR session status every 2 seconds（每次 5 秒超时；失败继续轮询；切回页面立即再查；确认后整页跳转）
   useEffect(() => {
     if (!qrSession?.sid || qrSession.status === 'confirmed' || qrSession.status === 'expired') {
       return;
     }
-    const timer = setInterval(async () => {
+    const sid = qrSession.sid;
+    let stopped = false;
+    let inFlight = false;
+    const pollOnce = async () => {
+      if (stopped || inFlight) return;
+      inFlight = true;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
       try {
-        const res = await fetch(`/api/auth/wechat/qr-session?sid=${encodeURIComponent(qrSession.sid)}`, {
+        const res = await fetch(`/api/auth/wechat/qr-session?sid=${encodeURIComponent(sid)}`, {
           cache: 'no-store',
+          signal: controller.signal,
         });
         const data = await res.json();
+        if (stopped) return;
         if (data.status === 'confirmed' && data.user) {
+          stopped = true;
           clearInterval(timer);
           setQrSession((prev) => (prev ? { ...prev, status: 'confirmed' } : prev));
           login(data.user);
-          router.push(data.redirectTo || returnTo);
+          window.location.assign(data.redirectTo || returnTo);
         } else if (data.status === 'scanned') {
           setQrSession((prev) =>
             prev ? { ...prev, status: 'scanned', nickname: data.nickname || prev.nickname } : prev,
@@ -156,11 +166,25 @@ function CnLoginForm() {
           setQrSession((prev) => (prev ? { ...prev, status: 'expired' } : prev));
         }
       } catch {
-        // ignore transient network errors
+        // ignore transient network errors / timeouts; next poll retries
+      } finally {
+        clearTimeout(timeout);
+        inFlight = false;
       }
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [qrSession?.sid, qrSession?.status, login, router, returnTo]);
+    };
+    const timer = setInterval(pollOnce, 2000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void pollOnce();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [qrSession?.sid, qrSession?.status, login, returnTo]);
 
   const handleWechatAuth = async () => {
     setError('');

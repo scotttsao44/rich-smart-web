@@ -18,6 +18,7 @@ import {
 } from '@/lib/local-cn-referral-attribution';
 import {
   confirmWechatQrSession,
+  consumeConfirmedWechatQrSession,
   createWechatQrSession,
   getWechatQrSession,
   markWechatQrSessionScanned,
@@ -64,16 +65,21 @@ export async function GET(request: NextRequest) {
   if (!sid) {
     return NextResponse.json({ error: '缺少扫码会话 ID' }, { status: 400 });
   }
-  const session = getWechatQrSession(sid);
-  if (!session) {
-    return NextResponse.json({ status: 'expired' });
+  const current = getWechatQrSession(sid);
+  if (!current || current.status === 'expired' || current.status === 'consumed') {
+    return NextResponse.json({ status: 'expired', consumed: current?.status === 'consumed' });
   }
-  if (session.status !== 'confirmed' || !session.memberId) {
+  if (current.status !== 'confirmed' || !current.memberId) {
     return NextResponse.json({
-      status: session.status,
-      nickname: session.nickname || null,
-      expiresAt: session.expiresAt,
+      status: current.status,
+      nickname: current.nickname || null,
+      expiresAt: current.expiresAt,
     });
+  }
+
+  const session = consumeConfirmedWechatQrSession(sid);
+  if (!session || !session.memberId) {
+    return NextResponse.json({ status: 'expired' });
   }
 
   const user = findLocalCnUserById(session.memberId);
