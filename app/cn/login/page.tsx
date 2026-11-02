@@ -385,7 +385,7 @@ function CnLoginForm() {
             <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 text-left">
               <div className="flex items-center justify-between mb-1">
                 <label className="text-xs font-medium text-slate-600">
-                  推荐人邀请码（选填，不填默认归属官方直属）
+                  推荐人邀请码（选填）
                 </label>
                 {refFromUrl && (
                   <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">

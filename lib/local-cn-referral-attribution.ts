@@ -2,7 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual, randomUUID } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs';
 import path from 'path';
 import type { NextRequest, NextResponse } from 'next/server';
-import { ensureLocalCnScootAdminAccount, findLocalCnUserById, findLocalCnUserByReferralCode, referralOwnerForAttribution } from '@/lib/local-cn-users';
+import { findLocalCnUserById, findLocalCnUserByReferralCode, referralOwnerForAttribution } from '@/lib/local-cn-users';
 
 export const REFERRAL_ATTRIBUTION_COOKIE = 'rs_ref_attr';
 export const REFERRAL_SESSION_COOKIE = 'rs_ref_session';
@@ -225,10 +225,8 @@ export function resolveReferralAttributionFromCode(rawCode?: string | null, sour
   const cleaned = String(rawCode || '').trim();
   let owner = cleaned ? findLocalCnUserByReferralCode(cleaned) : null;
   if (owner && !referralOwnerForAttribution(owner.id)) owner = null;
-  if (!owner) {
-    if (process.env.CN_TRANSITIONAL_TEST_MODE === 'false') return null;
-    owner = ensureLocalCnScootAdminAccount();
-  }
+  // 没有有效推荐码：不默认归 Scoot/官方直属，回传 null → 新会员为「归属待确认」，由 AI 客服询问来源并交后台核对
+  if (!owner) return null;
   const ensured = ensureLocalCnReferralLink(owner.id);
   if (!ensured) return null;
   const landed = recordLocalCnReferralLanding({

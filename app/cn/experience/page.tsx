@@ -36,8 +36,8 @@ function CnExperienceContent() {
   const [nickname, setNickname] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
-  const [referrerCode, setReferrerCode] = useState(refFromUrl || 'RS-CN-SCOOT');
-  const [referrerName, setReferrerName] = useState('Scoot（平台主管）');
+  const [referrerCode, setReferrerCode] = useState(refFromUrl || '');
+  const [referrerName, setReferrerName] = useState('');
 
   const [bootstrapping, setBootstrapping] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -67,8 +67,8 @@ function CnExperienceContent() {
       await fetch('/api/auth/wechat/quick-login', { cache: 'no-store' }).catch(() => null);
 
       // Sync referral attribution cookie and resolve referrer name
-      let resolvedRefCode = refFromUrl || 'RS-CN-SCOOT';
-      let resolvedRefName = 'Scoot（平台主管）';
+      let resolvedRefCode = refFromUrl || '';
+      let resolvedRefName = '';
       const pendingUrl = `/api/cn/referral-link/pending${refFromUrl ? `?ref=${encodeURIComponent(refFromUrl)}` : ''}`;
       const pendingRes = await fetch(pendingUrl, { cache: 'no-store', credentials: 'include' }).catch(() => null);
       if (pendingRes && pendingRes.ok) {
@@ -149,8 +149,8 @@ function CnExperienceContent() {
       const isNewRegistration = !member;
       const effectiveRefCode = (
         isNewRegistration
-          ? (refFromUrl || referrerCode || 'RS-CN-SCOOT')
-          : (member?.referrerCode || referrerCode || 'RS-CN-SCOOT')
+          ? (refFromUrl || referrerCode || '')
+          : (member?.referrerCode || referrerCode || '')
       ).trim().toUpperCase();
       const postRes = await fetch('/api/auth/wechat/quick-login', {
         method: 'POST',
@@ -236,7 +236,7 @@ function CnExperienceContent() {
                 {bootstrapping ? '正在同步安全状态...' : activeName || '未登录（填写下方资料一键激活）'}
               </p>
               <p className="mt-0.5 text-xs text-emerald-100/90">
-                归属推荐人：{member?.referrerName || referrerName}（{member?.referrerCode || referrerCode}）
+                归属推荐人：{(member?.referrerCode || referrerCode) ? <>{member?.referrerName || referrerName || (member?.referrerCode || referrerCode)}（{member?.referrerCode || referrerCode}）</> : '待确认（客服核对中）'}
               </p>
             </div>
             <div className="text-right">
@@ -324,7 +324,7 @@ function CnExperienceContent() {
                   type="text"
                   value={referrerCode}
                   onChange={(e) => setReferrerCode(e.target.value.toUpperCase())}
-                  placeholder="默认 RS-CN-SCOOT"
+                  placeholder="选填，没有可留空"
                   className="w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5 text-sm text-slate-900 focus:border-[#07c160] focus:bg-white focus:outline-none"
                 />
               </div>

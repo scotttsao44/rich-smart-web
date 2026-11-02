@@ -33,6 +33,19 @@ export function normalizeCnReferrerCode(code?: string | null) {
   return normalized || CAOMI_OFFICIAL_REFERRAL_CODE;
 }
 
+// 未填推荐码的新会员：归属待确认（由 AI 客服询问来源并交后台人工核对），不默认归官方直属；官方直属只能由管理员手动设置
+export const CAOMI_PENDING_ATTRIBUTION_SOURCE = 'pending_attribution';
+
+export function isLocalCnAttributionPending(user?: { referralSource?: string | null; referredByMemberId?: number | null } | null) {
+  return Boolean(user && user.referralSource === CAOMI_PENDING_ATTRIBUTION_SOURCE && !(Number(user.referredByMemberId) > 0));
+}
+
+/** 只回传会员真实填写/带入的推荐码；空值或官方直属代码视为「未填」 */
+export function explicitCnReferrerCode(code?: string | null) {
+  const normalized = String(code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 100);
+  return normalized && normalized !== CAOMI_OFFICIAL_REFERRAL_CODE ? normalized : '';
+}
+
 export type LocalCnUser = {
   id: number; name: string; phone: string; email: string; passwordHash: string;
   role: 'member'; agentLevel: number; referralCode: string; referrerCode: string | null;
@@ -73,7 +86,7 @@ function readAll(): LocalCnUser[] {
   try {
     const parsed = JSON.parse(readFileSync(filePath(), 'utf8'));
     return Array.isArray(parsed)
-      ? parsed.map((user) => ({ ...user, referrerCode: normalizeCnReferrerCode(user.referrerCode) }))
+      ? parsed.map((user) => ({ ...user, referrerCode: isLocalCnAttributionPending(user) ? null : normalizeCnReferrerCode(user.referrerCode) }))
       : [];
   }
   catch { return []; }
@@ -451,6 +464,16 @@ export function referralOwnerForAttribution(memberId: number) {
 
 export function localCnPromotionQualification(user: LocalCnUser | null | undefined) {
   if (!user) return { status: 'not_found' as const, canApply: false, reason: 'member_not_found' };
+  if (isLocalCnAttributionPending(user)) {
+    return {
+      status: 'disabled' as const,
+      canApply: false,
+      reason: 'attribution_pending',
+      appliedAt: user.promotionAppliedAt || null,
+      approvedAt: user.promotionApprovedAt || null,
+      policyVersion: user.promotionPolicyVersion || null,
+    };
+  }
   if (user.referralSharingEnabled === false) {
     return {
       status: 'disabled' as const,
@@ -553,6 +576,7 @@ export function getFrozenReferrerMemberId(user: Pick<LocalCnUser, 'referredByMem
 export function getFrozenReferrerCode(user: Pick<LocalCnUser, 'referredByMemberId' | 'referrerCode'> | null | undefined) {
   const referrerId = getFrozenReferrerMemberId(user);
   if (referrerId) return findLocalCnUserById(referrerId)?.referralCode || normalizeCnReferrerCode(user?.referrerCode);
+  if (user && !user.referrerCode) return '';
   return normalizeCnReferrerCode(user?.referrerCode);
 }
 
@@ -588,6 +612,7 @@ export function bindImmutableLocalCnReferral(input: {
   if (getFrozenReferrerMemberId(member)) return { ok: false as const, reason: 'already_bound', member };
   if (wouldCreateLocalCnReferralCycle(member.id, referrer.id)) return { ok: false as const, reason: 'cycle_or_self' };
   const now = new Date().toISOString();
+  if (member.referralSource === CAOMI_PENDING_ATTRIBUTION_SOURCE) member.referralSharingEnabled = true;
   member.referredByMemberId = referrer.id;
   member.referrerCode = normalizeCnReferrerCode(referrer.referralCode);
   member.referralBoundAt = now;
@@ -695,8 +720,9 @@ export function findOrCreateLocalWechatUser(openId: string, unionId: string | nu
   let id = Number.parseInt(Buffer.from(openId).toString('hex').slice(0, 10), 16) || Date.now();
   while (users.some((user) => user.id === id)) id += 1;
   const now = new Date().toISOString();
-  const normalizedReferrerCode = normalizeCnReferrerCode(referrerCode);
-  const referrer = users.find((user) => user.referralCode.toUpperCase() === normalizedReferrerCode) || null;
+  const explicitReferrerCode = explicitCnReferrerCode(referrerCode);
+  const referrer = explicitReferrerCode ? users.find((user) => user.referralCode.toUpperCase() === explicitReferrerCode) || null : null;
+  const pendingAttribution = !referrer;
   const user: LocalCnUser = {
     id,
     name: displayName || '微信会员',
@@ -706,14 +732,14 @@ export function findOrCreateLocalWechatUser(openId: string, unionId: string | nu
     role: 'member',
     agentLevel: 1,
     referralCode: `RS-CN-WX${id.toString(36).toUpperCase()}`,
-    referrerCode: normalizedReferrerCode,
+    referrerCode: pendingAttribution ? null : normalizeCnReferrerCode(referrer.referralCode),
     referredByMemberId: referrer?.id || null,
-    referralBoundAt: now,
-    referralSource: source,
+    referralBoundAt: pendingAttribution ? null : now,
+    referralSource: pendingAttribution ? CAOMI_PENDING_ATTRIBUTION_SOURCE : source,
     referralAttributionId: null,
     referralVisitId: null,
     platformAdmin: shouldBePlatformAdmin,
-    referralSharingEnabled: true,
+    referralSharingEnabled: !pendingAttribution,
     store: null,
     wechatId: openId,
     wechatMiniOpenId: source === 'mini_program' ? openId : null,
@@ -740,7 +766,7 @@ export function updateLocalWechatProfile(
   const referrerCode = String(input.referrerCode || '').trim().toUpperCase();
   if (name) current.name = name.slice(0, 80);
   if (avatarUrl && /^https:\/\//.test(avatarUrl)) current.avatarUrl = avatarUrl.slice(0, 1000);
-  if (!current.referrerCode) current.referrerCode = normalizeCnReferrerCode(referrerCode);
+  if (!current.referrerCode && !isLocalCnAttributionPending(current)) current.referrerCode = normalizeCnReferrerCode(referrerCode);
   current.profileAuthorizedAt = now;
   current.onboardingCompletedAt = current.onboardingCompletedAt || now;
   writeAll(users);
@@ -769,7 +795,7 @@ export function completeLocalWechatOnboarding(
     store,
   };
   if (store) current.store = store;
-  if (!current.referrerCode) current.referrerCode = normalizeCnReferrerCode(referrerCode);
+  if (!current.referrerCode && !isLocalCnAttributionPending(current)) current.referrerCode = normalizeCnReferrerCode(referrerCode);
   current.onboardingCompletedAt = new Date().toISOString();
   writeAll(users);
   return current;
@@ -853,10 +879,11 @@ export function findOrCreateLocalPhoneUser(input: {
     }
     let id = Date.now();
     while (users.some((u) => u.id === id)) id += 1;
-    const normalizedRefCode = normalizeCnReferrerCode(input.referrerCode);
+    const explicitRefCode = explicitCnReferrerCode(input.referrerCode);
     const referrer = (input.referredByMemberId ? users.find((u) => u.id === input.referredByMemberId) : null)
-      || users.find((u) => u.referralCode.toUpperCase() === normalizedRefCode)
+      || (explicitRefCode ? users.find((u) => u.referralCode.toUpperCase() === explicitRefCode) : null)
       || null;
+    const pendingAttribution = !referrer;
     const suffix = normalizedPhone.slice(-4);
     const displayName = String(input.displayName || '').trim().slice(0, 80) || `手机会员${suffix}`;
     const user: LocalCnUser = {
@@ -868,18 +895,20 @@ export function findOrCreateLocalPhoneUser(input: {
       role: 'member',
       agentLevel: 1,
       referralCode: `RS-CN-M${id.toString(36).toUpperCase()}`,
-      referrerCode: referrer?.referralCode || normalizedRefCode,
+      referrerCode: referrer ? normalizeCnReferrerCode(referrer.referralCode) : null,
       referredByMemberId: referrer?.id || null,
-      referralBoundAt: now,
-      referralSource: 'phone_sms',
-      referralAttributionId: input.referralAttributionId || null,
-      referralVisitId: input.referralVisitId || null,
+      referralBoundAt: pendingAttribution ? null : now,
+      referralSource: pendingAttribution ? CAOMI_PENDING_ATTRIBUTION_SOURCE : 'phone_sms',
+      referralAttributionId: pendingAttribution ? null : input.referralAttributionId || null,
+      referralVisitId: pendingAttribution ? null : input.referralVisitId || null,
       platformAdmin: false,
-      referralSharingEnabled: true,
-      promotionQualificationStatus: 'granted',
-      promotionAppliedAt: now,
-      promotionApprovedAt: now,
-      promotionPolicyVersion: PROMOTION_QUALIFICATION_POLICY_VERSION,
+      referralSharingEnabled: !pendingAttribution,
+      ...(pendingAttribution ? {} : {
+        promotionQualificationStatus: 'granted' as const,
+        promotionAppliedAt: now,
+        promotionApprovedAt: now,
+        promotionPolicyVersion: PROMOTION_QUALIFICATION_POLICY_VERSION,
+      }),
       store: null,
       wechatId: null,
       wechatMiniOpenId: null,
@@ -932,10 +961,14 @@ export function updateLocalCnMemberProfile(
       const normalizedRef = normalizeCnReferrerCode(referrerCode);
       const refUser = users.find((u) => u.referralCode.toUpperCase() === normalizedRef && u.id !== current.id);
       if (refUser) {
+        if (current.referralSource === CAOMI_PENDING_ATTRIBUTION_SOURCE) {
+          current.referralSource = 'member_profile_code';
+          current.referralSharingEnabled = true;
+        }
         current.referrerCode = refUser.referralCode;
         current.referredByMemberId = refUser.id;
         current.referralBoundAt = current.referralBoundAt || now;
-      } else {
+      } else if (!isLocalCnAttributionPending(current)) {
         current.referrerCode = normalizedRef;
       }
     }

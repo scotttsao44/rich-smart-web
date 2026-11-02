@@ -4,7 +4,7 @@ import {
   referralDisplayName,
   setPendingReferralAttributionCookie,
 } from '@/lib/local-cn-referral-attribution';
-import { CAOMI_OFFICIAL_REFERRAL_CODE, CAOMI_SCOOT_REFERRAL_CODE, findLocalCnUserById } from '@/lib/local-cn-users';
+import { CAOMI_OFFICIAL_REFERRAL_CODE, findLocalCnUserById } from '@/lib/local-cn-users';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   if (!pending) return NextResponse.json({ pending: false, hasPending: false, attribution: null });
   const referrer = findLocalCnUserById(pending.referrerMemberId);
   const referrerName = referralDisplayName(pending.referrerMemberId);
-  const referrerCode = referrer?.referralCode || CAOMI_SCOOT_REFERRAL_CODE;
+  const referrerCode = referrer?.referralCode || '';
   const response = NextResponse.json({
     pending: true,
     hasPending: true,
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     referrerCode,
     referredByCode: referrerCode,
     officialReferralCode: CAOMI_OFFICIAL_REFERRAL_CODE,
-    defaultReferralCode: CAOMI_SCOOT_REFERRAL_CODE,
+    defaultReferralCode: '',
     referrerMemberId: pending.referrerMemberId,
     attributionId: pending.attributionId,
     visitId: pending.visitId,

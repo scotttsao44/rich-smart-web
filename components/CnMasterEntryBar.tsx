@@ -7,8 +7,9 @@ import { useAuth } from '@/app/providers';
 
 export default function CnMasterEntryBar() {
   const { user } = useAuth();
-  const [refCode, setRefCode] = useState('RS-CN-SCOOT');
-  const [referrerName, setReferrerName] = useState('Scoot');
+  // 没有推荐码时不默认任何推荐人：登录后归属待客服核对
+  const [refCode, setRefCode] = useState('');
+  const [referrerName, setReferrerName] = useState('');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -36,7 +37,8 @@ export default function CnMasterEntryBar() {
       .catch(() => undefined);
   }, []);
 
-  const encodedRef = encodeURIComponent(refCode || 'RS-CN-SCOOT');
+  const encodedRef = encodeURIComponent(refCode);
+  const refQuery = refCode ? `ref=${encodedRef}` : '';
 
   return (
     <div className="border-b border-emerald-200/80 bg-gradient-to-r from-emerald-50/90 via-white to-amber-50/70">
@@ -44,7 +46,7 @@ export default function CnMasterEntryBar() {
         <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-[#07C160]/15 px-3 py-1 font-black text-[#069448]">
             <UserCheck className="h-3.5 w-3.5" />
-            推荐归属：{referrerName || 'Scoot'}（{refCode}）
+            {refCode ? <>推荐归属：{referrerName || refCode}（{refCode}）</> : <>推荐归属：待确认（登录后由客服核对）</>}
           </span>
           {user ? (
             <span className="font-semibold text-stone-700">
@@ -67,7 +69,7 @@ export default function CnMasterEntryBar() {
                 进入会员与分享中心
               </Link>
               <Link
-                href={`/cn/login?ref=${encodedRef}&switch=1`}
+                href={`/cn/login?${refQuery ? `${refQuery}&` : ''}switch=1`}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-3 py-2 text-xs font-black text-emerald-900 hover:bg-emerald-50"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
@@ -76,7 +78,7 @@ export default function CnMasterEntryBar() {
             </>
           ) : (
             <Link
-              href={`/cn/login?ref=${encodedRef}`}
+              href={`/cn/login${refQuery ? `?${refQuery}` : ''}`}
               className="inline-flex items-center gap-1.5 rounded-lg bg-[#07C160] px-4 py-2 text-xs sm:text-sm font-black text-white shadow-xs hover:bg-[#06ad56]"
             >
               微信 / 手机一键登录领会员
@@ -84,7 +86,7 @@ export default function CnMasterEntryBar() {
           )}
 
           <Link
-            href={`/cn/experience?ref=${encodedRef}`}
+            href={`/cn/experience${refQuery ? `?${refQuery}` : ''}`}
             className="inline-flex items-center gap-1.5 rounded-lg border border-stone-300 bg-white px-3 py-2 text-xs font-black text-stone-800 hover:border-[var(--caomi-leaf-700)] hover:bg-stone-50"
           >
             <CalendarClock className="h-3.5 w-3.5 text-[var(--caomi-forest-700)]" />

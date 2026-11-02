@@ -7,7 +7,7 @@ import {
   recordLocalCnReferralLanding,
   setPendingReferralAttributionCookie,
 } from '@/lib/local-cn-referral-attribution';
-import { ensureLocalCnScootAdminAccount, findLocalCnUserById, findLocalCnUserByReferralCode } from '@/lib/local-cn-users';
+import { findLocalCnUserById, findLocalCnUserByReferralCode } from '@/lib/local-cn-users';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,7 +31,9 @@ export async function GET(request: NextRequest) {
   const refCode = String(request.nextUrl.searchParams.get('ref') || request.nextUrl.searchParams.get('r') || '').trim();
   let token = rawToken;
   if (!token) {
-    const owner = (refCode ? findLocalCnUserByReferralCode(refCode) : null) || ensureLocalCnScootAdminAccount();
+    // 没有有效推荐码：不再默认归 Scoot/官方直属，直接进入目标页（登录后归属待客服核对）
+    const owner = refCode ? findLocalCnUserByReferralCode(refCode) : null;
+    if (!owner) return NextResponse.redirect(new URL(safeNextPath(request.nextUrl.searchParams.get('next') || request.nextUrl.searchParams.get('to')), appOrigin(request)), 302);
     const ensured = ensureLocalCnReferralLink(owner.id);
     if (ensured) token = ensured.token;
   }
@@ -47,19 +49,6 @@ export async function GET(request: NextRequest) {
     sourcePath: `${request.nextUrl.pathname}${request.nextUrl.search}`,
     userAgent: request.headers.get('user-agent'),
   });
-  if (!result.ok) {
-    const fallbackOwner = ensureLocalCnScootAdminAccount();
-    const ensured = ensureLocalCnReferralLink(fallbackOwner.id);
-    if (ensured) {
-      result = recordLocalCnReferralLanding({
-        token: ensured.token,
-        existingPending: null,
-        sessionId: existingSession,
-        sourcePath: `${request.nextUrl.pathname}${request.nextUrl.search}`,
-        userAgent: request.headers.get('user-agent'),
-      });
-    }
-  }
   if (!result.ok) {
     return NextResponse.redirect(new URL('/cn/login?referral=invalid', appOrigin(request)), 302);
   }

@@ -4,12 +4,13 @@ import { appOrigin, createOAuthState, redirectWithSession, setOAuthStateCookie, 
 import { getFreshSessionUser } from '@/lib/auth';
 import {
   bindImmutableLocalCnReferral,
-  CAOMI_OFFICIAL_REFERRAL_CODE,
   findLocalCnUserById,
   findLocalCnUserByReferralCode,
   findOrCreateLocalWechatUser,
+  explicitCnReferrerCode,
   grantLocalCnPromotionQualification,
   isKnownLocalCnReferrerCode,
+  isLocalCnAttributionPending,
   normalizeCnReferrerCode,
 } from '@/lib/local-cn-users';
 import { db } from '@/lib/db';
@@ -218,9 +219,8 @@ export async function finishWechatWebOAuth(request: NextRequest, kind: WechatWeb
         qrSid = String(returnUrl.searchParams.get('sid') || '').trim();
       } catch {}
       const qrSession = qrSid ? getWechatQrSession(qrSid) : null;
-      const effectiveRefCode = normalizeCnReferrerCode(
-        referralCode || qrSession?.referrerCode || CAOMI_OFFICIAL_REFERRAL_CODE,
-      );
+      // 未填推荐码不默认官方直属：留空 → 新会员为「归属待确认」
+      const effectiveRefCode = explicitCnReferrerCode(referralCode || qrSession?.referrerCode || '');
       const effectiveUnionId = profile.unionId || `wx_union_${provider.appId}_${profile.openId}`;
 
       if (state.bindMemberId) {
@@ -269,10 +269,12 @@ export async function finishWechatWebOAuth(request: NextRequest, kind: WechatWeb
           visitId: pendingReferral?.referrerMemberId === refUser.id ? pendingReferral.visitId || null : null,
         });
       }
-      grantLocalCnPromotionQualification(localUser.id, {
-        actorId: localUser.id,
-        source: 'wechat_oauth_auto',
-      });
+      if (!isLocalCnAttributionPending(findLocalCnUserById(localUser.id) || localUser)) {
+        grantLocalCnPromotionQualification(localUser.id, {
+          actorId: localUser.id,
+          source: 'wechat_oauth_auto',
+        });
+      }
       const freshUser = findLocalCnUserById(localUser.id) || localUser;
       if (qrSid) {
         confirmWechatQrSession(qrSid, { memberId: freshUser.id, nickname: freshUser.name });

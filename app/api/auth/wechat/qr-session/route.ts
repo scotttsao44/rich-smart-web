@@ -3,13 +3,13 @@ import { createHash, randomBytes } from 'crypto';
 import { createSessionToken, setSessionCookie, type SessionUser } from '@/lib/auth';
 import {
   bindImmutableLocalCnReferral,
-  CAOMI_OFFICIAL_REFERRAL_CODE,
   findLocalCnUserById,
   findLocalCnUserByReferralCode,
   findLocalCnUserByWechatIdentity,
   findOrCreateLocalWechatUser,
+  explicitCnReferrerCode,
   grantLocalCnPromotionQualification,
-  normalizeCnReferrerCode,
+  isLocalCnAttributionPending,
   updateLocalCnMemberProfile,
 } from '@/lib/local-cn-users';
 import {
@@ -165,9 +165,7 @@ export async function POST(request: NextRequest) {
       const pendingReferral = readPendingReferralAttribution(request, bodyReferrerCode || null);
       const pendingReferrerUser = pendingReferral ? findLocalCnUserById(pendingReferral.referrerMemberId) : null;
       const resolvedReferrerUser = bodyReferrerUser || pendingReferrerUser;
-      const resolvedReferrerCode = normalizeCnReferrerCode(
-        resolvedReferrerUser?.referralCode || bodyReferrerCode || CAOMI_OFFICIAL_REFERRAL_CODE,
-      );
+      const resolvedReferrerCode = explicitCnReferrerCode(resolvedReferrerUser?.referralCode || bodyReferrerCode || '');
 
       const existingIdentityUser = findLocalCnUserByWechatIdentity(openId, unionId);
       const displayName =
@@ -204,10 +202,12 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      grantLocalCnPromotionQualification(user.id, {
-        actorId: user.id,
-        source: 'wechat_qr_scan_auto',
-      });
+      if (!isLocalCnAttributionPending(findLocalCnUserById(user.id) || user)) {
+        grantLocalCnPromotionQualification(user.id, {
+          actorId: user.id,
+          source: 'wechat_qr_scan_auto',
+        });
+      }
 
       const freshUser = findLocalCnUserById(user.id) || user;
       if (sid) {

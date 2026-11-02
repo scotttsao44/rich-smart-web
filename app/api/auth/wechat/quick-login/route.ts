@@ -8,7 +8,9 @@ import {
   findLocalCnUserByReferralCode,
   findLocalCnUserByWechatIdentity,
   findOrCreateLocalWechatUser,
+  explicitCnReferrerCode,
   grantLocalCnPromotionQualification,
+  isLocalCnAttributionPending,
   normalizeCnReferrerCode,
   updateLocalCnMemberProfile,
 } from '@/lib/local-cn-users';
@@ -50,8 +52,8 @@ function buildMemberPayload(user: NonNullable<ReturnType<typeof findLocalCnUserB
     email: user.email && !user.email.endsWith('@local.invalid') ? user.email : '',
     referralCode: user.referralCode,
     referredByMemberId: referrer?.id || user.referredByMemberId || null,
-    referrerCode: referrer?.referralCode || user.referrerCode || CAOMI_OFFICIAL_REFERRAL_CODE,
-    referrerName: referrer?.name || '糙米健康官方直属',
+    referrerCode: referrer?.referralCode || user.referrerCode || (isLocalCnAttributionPending(user) ? '' : CAOMI_OFFICIAL_REFERRAL_CODE),
+    referrerName: referrer?.name || (isLocalCnAttributionPending(user) ? '待确认归属（客服核对中）' : '糙米健康官方直属'),
     profileAuthorized: Boolean(user.profileAuthorizedAt),
     onboardingCompleted: Boolean(user.onboardingCompletedAt),
   };
@@ -160,9 +162,7 @@ export async function POST(request: NextRequest) {
     const pendingReferrerUser = pendingReferral ? findLocalCnUserById(pendingReferral.referrerMemberId) : null;
     // Explicit referrerCode from the form/URL always takes precedence over any residual cookie
     const resolvedReferrerUser = bodyReferrerUser || pendingReferrerUser;
-    const resolvedReferrerCode = normalizeCnReferrerCode(
-      resolvedReferrerUser?.referralCode || bodyReferrerCode || CAOMI_OFFICIAL_REFERRAL_CODE,
-    );
+    const resolvedReferrerCode = explicitCnReferrerCode(resolvedReferrerUser?.referralCode || bodyReferrerCode || '');
 
     const existingIdentityUser = findLocalCnUserByWechatIdentity(openId, unionId);
     const displayName =
@@ -188,7 +188,7 @@ export async function POST(request: NextRequest) {
         name: rawNickname || user.name,
         phone: rawPhone || undefined,
         email: rawEmail || undefined,
-        referrerCode: resolvedReferrerUser?.referralCode || resolvedReferrerCode,
+        referrerCode: resolvedReferrerUser?.referralCode || resolvedReferrerCode || undefined,
       });
     } else if (rawNickname && user.name !== rawNickname) {
       user = updateLocalCnMemberProfile(user.id, { name: rawNickname });
@@ -206,11 +206,13 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    grantLocalCnPromotionQualification(user.id, {
-      actorId: user.id,
-      source: 'wechat_quick_auth_auto',
-    });
-    ensureLocalCnReferralLink(user.id);
+    if (!isLocalCnAttributionPending(findLocalCnUserById(user.id) || user)) {
+      grantLocalCnPromotionQualification(user.id, {
+        actorId: user.id,
+        source: 'wechat_quick_auth_auto',
+      });
+      ensureLocalCnReferralLink(user.id);
+    }
 
     const freshUser = findLocalCnUserById(user.id) || user;
     const sessionUser = toSessionUser(freshUser);

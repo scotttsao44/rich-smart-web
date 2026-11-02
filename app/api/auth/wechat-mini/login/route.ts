@@ -119,8 +119,7 @@ export async function POST(request: NextRequest) {
     const referralToken = String(body.referralToken || '').trim();
     const rawRefCode = String(body.referrerCode || body.ref || '').trim();
     const referrerCode = (referralToken ? referralCodeFromLocalCnReferralToken(referralToken) || '' : '')
-      || rawRefCode
-      || (process.env.CN_TRANSITIONAL_TEST_MODE !== 'false' ? 'RS-CN-SCOOT' : '');
+      || rawRefCode;
     if (!code) return NextResponse.json({ error: '缺少小程序 login code' }, { status: 400 });
 
     const session = await exchangeWechatMiniCode(appId, appSecret, code);
@@ -147,14 +146,14 @@ export async function POST(request: NextRequest) {
           phoneBound: Boolean(localUser.phoneVerifiedAt),
         }, user);
       }
-      if (!referralToken && !referrerCode) return NextResponse.json({ error: '请从邀请链接进入完成会员注册', code: 'REFERRAL_REQUIRED' }, { status: 400 });
-      if (!referrerCode) return NextResponse.json({ error: '邀请链接已失效，请联系邀请人重新分享', code: 'REFERRAL_TOKEN_INVALID' }, { status: 400 });
-      if (!isKnownLocalCnReferrerCode(referrerCode)) {
+      // 未带推荐码：建立「归属待确认」会员（不默认 Scoot/官方直属）
+      if (referralToken && !referrerCode) return NextResponse.json({ error: '邀请链接已失效，请联系邀请人重新分享', code: 'REFERRAL_TOKEN_INVALID' }, { status: 400 });
+      if (referrerCode && !isKnownLocalCnReferrerCode(referrerCode)) {
         return NextResponse.json({ error: '找不到该推荐码，请向推荐人确认', code: 'REFERRAL_NOT_FOUND' }, { status: 400 });
       }
       if (!session.unionid) return phoneRequired(appId, session, referrerCode, referralToken, displayName, avatarUrl);
 
-      const result = findOrCreateLocalWechatUser(session.openid, session.unionid || null, displayName, referrerCode, 'mini_program', appId, null, avatarUrl);
+      const result = findOrCreateLocalWechatUser(session.openid, session.unionid || null, displayName, referrerCode || null, 'mini_program', appId, null, avatarUrl);
       const localUser = result.user;
       const user = miniSessionUser(localUser);
       return jsonWithSession({

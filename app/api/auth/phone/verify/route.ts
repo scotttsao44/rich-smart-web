@@ -8,8 +8,6 @@ import {
   readPendingReferralAttribution,
 } from '@/lib/local-cn-referral-attribution';
 import {
-  CAOMI_SCOOT_REFERRAL_CODE,
-  ensureLocalCnScootAdminAccount,
   findLocalCnUserById,
   findOrCreateLocalPhoneUser,
 } from '@/lib/local-cn-users';
@@ -65,11 +63,12 @@ export async function POST(request: NextRequest) {
     }
 
     const pending = readPendingReferralAttribution(request, body.referrerCode ? String(body.referrerCode) : null);
-    const referrerUser = (pending?.referrerMemberId ? findLocalCnUserById(pending.referrerMemberId) : null) || ensureLocalCnScootAdminAccount();
+    // 未带推荐码/邀请链接：不默认任何推荐人或官方直属，新会员为「归属待确认」
+    const referrerUser = pending?.referrerMemberId ? findLocalCnUserById(pending.referrerMemberId) : null;
     const created = findOrCreateLocalPhoneUser({
       phone,
       displayName: body.nickname || body.displayName || null,
-      referrerCode: referrerUser?.referralCode || CAOMI_SCOOT_REFERRAL_CODE,
+      referrerCode: referrerUser?.referralCode || null,
       referredByMemberId: referrerUser?.id || null,
       referralAttributionId: pending?.attributionId || null,
       referralVisitId: pending?.visitId || null,
@@ -107,7 +106,9 @@ export async function POST(request: NextRequest) {
       token: createSessionToken(sessionUser),
       isNewMember: created.isNew,
       redirectTo: nextPath,
-      message: created.isNew ? '手机号验证成功，已完成会员注册与推荐绑定' : '手机号验证登录成功',
+      message: created.isNew
+        ? (created.user.referredByMemberId ? '手机号验证成功，已完成会员注册与推荐绑定' : '手机号验证成功，已完成会员注册；推荐归属待客服核对')
+        : '手机号验证登录成功',
     });
     setSessionCookie(response, sessionUser);
     clearPendingReferralAttributionCookie(response, (process.env.NEXT_PUBLIC_APP_URL || '').startsWith('https://'));

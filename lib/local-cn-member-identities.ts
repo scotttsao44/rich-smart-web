@@ -5,6 +5,11 @@ import { withLocalCnUsersWriteLock, type LocalCnUser } from '@/lib/local-cn-user
 
 const CAOMI_OFFICIAL_REFERRAL_CODE = 'RS-CN-OFFICIAL';
 
+const PENDING_ATTRIBUTION_SOURCE = 'pending_attribution';
+function isPendingAttribution(user: { referralSource?: string | null; referredByMemberId?: number | null }) {
+  return user.referralSource === PENDING_ATTRIBUTION_SOURCE && !(Number(user.referredByMemberId) > 0);
+}
+
 function normalizeCnReferrerCode(code?: string | null) {
   const normalized = String(code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 100);
   return normalized || CAOMI_OFFICIAL_REFERRAL_CODE;
@@ -102,7 +107,7 @@ function readUsers(): LocalCnUser[] {
     if (!existsSync(usersPath())) return [];
     const parsed = JSON.parse(readFileSync(usersPath(), 'utf8'));
     return Array.isArray(parsed)
-      ? parsed.map((user) => ({ ...user, referrerCode: normalizeCnReferrerCode(user.referrerCode) }))
+      ? parsed.map((user) => ({ ...user, referrerCode: isPendingAttribution(user) ? null : normalizeCnReferrerCode(user.referrerCode) }))
       : [];
   } catch {
     return [];
@@ -128,10 +133,12 @@ function nextMemberId(users: LocalCnUser[], seed: string) {
 }
 
 function createUser(users: LocalCnUser[], input: ResolveWechatIdentityInput, now: string) {
-  if (!input.referrerCode) throw new Error('请从邀请链接进入完成会员注册');
-  if (!isKnownLocalCnReferrerCode(input.referrerCode, users)) throw new Error('找不到该推荐码，请向推荐人确认');
-  const normalizedReferrerCode = normalizeCnReferrerCode(input.referrerCode || CAOMI_OFFICIAL_REFERRAL_CODE);
-  const referrer = users.find((user) => user.referralCode.toUpperCase() === normalizedReferrerCode) || null;
+  // 未填推荐码：建立「归属待确认」会员（不默认官方直属、无推广资格），由 AI 客服询问来源后交后台核对
+  const rawReferrerCode = String(input.referrerCode || '').trim().toUpperCase();
+  const explicitReferrerCode = rawReferrerCode && normalizeCnReferrerCode(rawReferrerCode) !== CAOMI_OFFICIAL_REFERRAL_CODE ? normalizeCnReferrerCode(rawReferrerCode) : '';
+  if (explicitReferrerCode && !isKnownLocalCnReferrerCode(explicitReferrerCode, users)) throw new Error('找不到该推荐码，请向推荐人确认');
+  const referrer = explicitReferrerCode ? users.find((user) => user.referralCode.toUpperCase() === explicitReferrerCode) || null : null;
+  const pendingAttribution = !referrer;
   const id = nextMemberId(users, `${input.appId}:${input.openId}`);
   const user: LocalCnUser = {
     id,
@@ -142,17 +149,19 @@ function createUser(users: LocalCnUser[], input: ResolveWechatIdentityInput, now
     role: 'member',
     agentLevel: 1,
     referralCode: `RS-CN-WX${id.toString(36).toUpperCase()}`,
-    referrerCode: normalizedReferrerCode,
+    referrerCode: referrer ? normalizeCnReferrerCode(referrer.referralCode) : null,
     referredByMemberId: referrer?.id || null,
-    referralBoundAt: now,
-    referralSource: input.source,
+    referralBoundAt: pendingAttribution ? null : now,
+    referralSource: pendingAttribution ? PENDING_ATTRIBUTION_SOURCE : input.source,
     referralAttributionId: null,
     referralVisitId: null,
     platformAdmin: false,
-    referralSharingEnabled: true,
-    promotionQualificationStatus: 'granted',
-    promotionAppliedAt: now,
-    promotionApprovedAt: now,
+    referralSharingEnabled: !pendingAttribution,
+    ...(pendingAttribution ? {} : {
+      promotionQualificationStatus: 'granted' as const,
+      promotionAppliedAt: now,
+      promotionApprovedAt: now,
+    }),
     store: null,
     wechatId: null,
     wechatMiniOpenId: input.source === 'wechat_mini_program' ? input.openId : null,
