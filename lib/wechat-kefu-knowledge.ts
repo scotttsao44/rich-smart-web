@@ -95,7 +95,8 @@ export function kefuApplyReply() {
 
 // 客人问保险／使用说明／检测报告／资质时的固定回复（只发已审核的公开链接）
 export function kefuDocsReply(keys: KefuDocKey[]) {
-  const uniq = Array.from(new Set(keys.length ? keys : (Object.keys(KEFU_DOCS) as KefuDocKey[])));
+  // 默认不含保单 PDF（insurancePolicy）；只在客人明确要完整保单／条款时由调用方传入
+  const uniq = Array.from(new Set(keys.length ? keys : (Object.keys(KEFU_DOCS) as KefuDocKey[]).filter((k) => k !== 'insurancePolicy')));
   const lines: string[] = [KEFU_DOCS_NOTE];
   uniq.forEach((k, i) => lines.push(`${i + 1}. ${KEFU_DOCS[k].title}`, KEFU_DOCS[k].url));
   if (uniq.includes('insurance')) {

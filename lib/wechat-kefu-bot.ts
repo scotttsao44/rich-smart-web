@@ -46,6 +46,8 @@ const RE_HUMAN = /(人工|真人|转接|找客服|联系客服|客服在吗|投�
 const RE_GREETING = /^(您好|你好|hello|hi|嗨|哈喽|在吗|在不在|有人吗|有人在吗|在么|你好呀|您好呀)+$/i;
 const RE_SUITABILITY = /(能用吗|可以用吗|能不能用|可不可以用|适合用|适不适合|禁忌|注意事项|注意什么|哪些人不能)/;
 const RE_SYMPTOM = /(症状|疼|痛|酸|麻|晕|失眠|睡不着|睡不好|发烧|发热|咳|喘|胸闷|心慌|心悸|血压|血糖|血脂|糖尿病|肿瘤|癌|炎|结节|便秘|腹泻|拉肚子|过敏|湿疹|月经|痛经|乏力|疲劳|怕冷|手脚冰凉|不舒服|难受|生病|疾病|病|能治|治疗|治好|吃什么药|用药|药)/;
+// 只有客人明确要完整保单／保单条款时才发保单 PDF（特别约定第 4 条限制宣传使用，且 PDF 含个人姓名与地址）
+const RE_FULL_POLICY = /(保单原件|完整保单|保单完整|完整版保单|保单全文|保单条款|保险条款|电子保单)/;
 const RE_DOCS = /(保险|保单|责任险|使用说明|说明书|使用手册|检测报告|检验报告|测试报告|资质|证书|证照|认证|波长|(?<![A-Za-z])(?:CE|EMC|CNAS)(?![A-Za-z]))/i;
 const RE_APPLY = /(怎么申请|如何申请|怎样申请|想申请|要申请|申请机器|申请设备|申请合作|申请流程|申请条件|怎么合作|如何合作|想合作|要合作|加盟|投放机器|怎么拿到机器|想要机器|要台机器)/;
 const RE_PRICE = /(多少钱|价格|价钱|费用|收费|次卡|几档|报价|怎么收费)/;
@@ -350,11 +352,12 @@ async function handleText(openid: string, text: string, deadline: number): Promi
 
   if (RE_DOCS.test(simple)) {
     const keys: KefuDocKey[] = [];
-    if (/(保险|保单|责任险)/.test(simple)) keys.push('insurance', 'insurancePolicy');
+    if (/(保险|保单|责任险)/.test(simple)) keys.push('insurance');
+    if (RE_FULL_POLICY.test(simple)) keys.push('insurance', 'insurancePolicy');
     if (/(使用说明|说明书|使用手册)/.test(simple)) keys.push('usage');
     if (/(检测报告|检验报告|测试报告|波长|(?<![A-Za-z])CNAS(?![A-Za-z]))/i.test(simple)) keys.push('wavelength', 'emc');
     if (/(?<![A-Za-z])(?:CE|EMC)(?![A-Za-z])/i.test(simple)) keys.push('emc');
-    if (/(资质|证书|证照|认证)/.test(simple)) keys.push('emc', 'wavelength', 'insurance', 'insurancePolicy');
+    if (/(资质|证书|证照|认证)/.test(simple)) keys.push('emc', 'wavelength', 'insurance');
     return passive(openid, kefuDocsReply(keys), 'docs');
   }
 
