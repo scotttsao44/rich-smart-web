@@ -21,8 +21,11 @@ import {
   KEFU_SYSTEM_PROMPT,
   KEFU_WELCOME,
   isAllowedHealthUrl,
+  type KefuDocKey,
+  kefuApplyReply,
   kefuBlockedTerm,
   kefuCuratedHealthLinks,
+  kefuDocsReply,
   kefuSafetyReply,
   kefuSymptomKeyword,
   kefuTierReply,
@@ -42,6 +45,8 @@ const RE_HUMAN = /(人工|真人|转接|找客服|联系客服|客服在吗|投�
 const RE_GREETING = /^(您好|你好|hello|hi|嗨|哈喽|在吗|在不在|有人吗|有人在吗|在么|你好呀|您好呀)+$/i;
 const RE_SUITABILITY = /(能用吗|可以用吗|能不能用|可不可以用|适合用|适不适合|禁忌|注意事项|注意什么|哪些人不能)/;
 const RE_SYMPTOM = /(症状|疼|痛|酸|麻|晕|失眠|睡不着|睡不好|发烧|发热|咳|喘|胸闷|心慌|心悸|血压|血糖|血脂|糖尿病|肿瘤|癌|炎|结节|便秘|腹泻|拉肚子|过敏|湿疹|月经|痛经|乏力|疲劳|怕冷|手脚冰凉|不舒服|难受|生病|疾病|病|能治|治疗|治好|吃什么药|用药|药)/;
+const RE_DOCS = /(保险|保单|责任险|使用说明|说明书|使用手册|检测报告|检验报告|测试报告|资质|证书|证照|认证|波长|(?<![A-Za-z])(?:CE|EMC|CNAS)(?![A-Za-z]))/i;
+const RE_APPLY = /(怎么申请|如何申请|怎样申请|想申请|要申请|申请机器|申请设备|申请合作|申请流程|申请条件|怎么合作|如何合作|想合作|要合作|加盟|投放机器|怎么拿到机器|想要机器|要台机器)/;
 const RE_PRICE = /(多少钱|价格|价钱|费用|收费|次卡|几档|报价|怎么收费)/;
 const RE_BUSINESS = /(合作|加盟|申请|代理|次卡|开店|门店|投放|多少钱|价格|费用|购买|买|入驻|机器)/;
 
@@ -280,6 +285,16 @@ async function handleText(openid: string, text: string, deadline: number): Promi
 
   if (RE_GREETING.test(c)) return passive(openid, KEFU_GREETING, 'greeting');
 
+  if (RE_DOCS.test(simple)) {
+    const keys: KefuDocKey[] = [];
+    if (/(保险|保单|责任险)/.test(simple)) keys.push('insurance');
+    if (/(使用说明|说明书|使用手册)/.test(simple)) keys.push('usage');
+    if (/(检测报告|检验报告|测试报告|波长|(?<![A-Za-z])CNAS(?![A-Za-z]))/i.test(simple)) keys.push('wavelength', 'emc');
+    if (/(?<![A-Za-z])(?:CE|EMC)(?![A-Za-z])/i.test(simple)) keys.push('emc');
+    if (/(资质|证书|证照|认证)/.test(simple)) keys.push('emc', 'wavelength', 'insurance');
+    return passive(openid, kefuDocsReply(keys), 'docs');
+  }
+
   if (RE_SUITABILITY.test(simple)) return passive(openid, kefuSafetyReply(), 'safety');
 
   if (RE_SYMPTOM.test(simple)) {
@@ -296,6 +311,8 @@ async function handleText(openid: string, text: string, deadline: number): Promi
     task.then((reply) => deliverAsync(openid, reply, 'health')).catch(() => console.warn('[wechat-kefu] health async error'));
     return passive(openid, `这类身体状况的问题，我们不做判断。正在为您查找卫健委等权威机构的公开科普资料，稍后发给您。\n${KEFU_SEE_DOCTOR}。`, 'health_ack');
   }
+
+  if (RE_APPLY.test(simple)) return passive(openid, withAttribution(openid, kefuApplyReply(), simple), 'apply');
 
   if (RE_PRICE.test(simple)) return passive(openid, withAttribution(openid, kefuTierReply(), simple), 'price');
 
