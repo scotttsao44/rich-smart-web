@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { matchProductCategoryRule, productCategoryRuleNotice } from './cn-product-category-rules';
 
 export type ProductDraft = {
   name: string;
@@ -59,9 +60,10 @@ function inferCategory(text: string) {
     ['酵素', /酵素|发酵/],
     ['睡眠调理', /睡眠|褪黑素|放松/],
     ['健康设备', /健康卫兵|共振|频率|检测|仪器|设备|量子/],
-    ['健康优选', /健康|营养|保健/],
   ] as const;
-  return categories.find(([, pattern]) => pattern.test(text))?.[0] || '健康优选';
+  const matched = categories.find(([, pattern]) => pattern.test(text))?.[0];
+  if (matched) return matched;
+  return matchProductCategoryRule(text)?.category || '健康优选';
 }
 
 export function productDraftFromPdfText(rawText: string, fileName = ''): { draft: ProductDraft; warnings: string[] } {
@@ -115,6 +117,8 @@ export function productDraftFromPdfText(rawText: string, fileName = ''): { draft
   if (!rawPrice) warnings.push(`PDF 未标注明确售价，已为您预设建议售价 ¥${price}（供货结算价 ¥${supplyPriceCny}），可在表单中直接修改。`);
   if (!rawStock) warnings.push(`PDF 未标注库存，已预设库存 ${stock} 件，可按实际库存调整。`);
   if (!rawFulfillment) warnings.push('已自动填入标准发货与履约说明，可根据品牌实际时效微调。');
+  const categoryNotice = productCategoryRuleNotice(`${category || inferCategory(text)} ${labeledName || candidateName}${/新资源食品|新食品原料/.test(text) ? ' 新资源食品' : ''}`);
+  if (categoryNotice) warnings.push(categoryNotice);
 
   return {
     draft: {

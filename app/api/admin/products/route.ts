@@ -152,8 +152,12 @@ export async function PUT(request: NextRequest) {
     if (!process.env.DATABASE_URL) {
       const decision = String(data.reviewStatus || '') as 'approved' | 'rejected';
       if (!['approved', 'rejected'].includes(decision)) return NextResponse.json({ error: '请选择通过或退回' }, { status: 400 });
-      const updated = reviewBrandProduct(reviewer!, Number(id), decision, String(data.reviewNote || ''));
-      return NextResponse.json({ ...updated, editUrl: updated.reviewStatus === 'rejected' ? `/vendor/products/${updated.id}/edit` : null });
+      try {
+        const updated = reviewBrandProduct(reviewer!, Number(id), decision, String(data.reviewNote || ''));
+        return NextResponse.json({ ...updated, editUrl: updated.reviewStatus === 'rejected' ? `/vendor/products/${updated.id}/edit` : null });
+      } catch (error) {
+        return NextResponse.json({ error: error instanceof Error ? error.message : '审核失败' }, { status: 400 });
+      }
     }
     if (brandPilotDbEnabled()) {
       const decision = String(data.reviewStatus || '') as 'approved' | 'rejected';

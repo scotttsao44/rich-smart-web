@@ -3,6 +3,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { detectSharedDeviceText, isSharedDeviceListing } from '@/lib/vendor-product-form-feedback';
+import { matchProductCategoryRule, productCategoryRuleNotice } from '@/lib/cn-product-category-rules';
 import { getFreshSessionUser, hasPlatformAdminAccess } from '@/lib/auth';
 import {
   createBrandProduct,
@@ -166,6 +167,8 @@ function inferProductCategory(text: string, currentCategory?: string): string {
   if (/代餐|膳食纤维|体态/.test(text)) return '代餐管理';
   if (/睡眠|放松/.test(text)) return '睡眠调理';
   if (currentCategory && currentCategory.trim()) return currentCategory.trim();
+  const rule = matchProductCategoryRule(text);
+  if (rule) return rule.category;
   return '健康优选';
 }
 
@@ -276,9 +279,12 @@ function buildProductDraftFromPrompt(prompt: string, currentForm: Record<string,
     stockNum === null ? '库存' : '',
     fulfillmentInfo ? '' : '发货方式',
   ].filter(Boolean);
-  const agentReply = shared
+  let agentReply = shared
     ? `已整理「${name}」资料，商品类型为「共享设备（投放合作）」，不标售价；请核对后提交平台审核。`
     : `已整理「${name}」资料${priceNum > 0 ? `：售价 ¥${priceNum.toLocaleString()}` : ''}${supplyNum > 0 ? `、结算价 ¥${supplyNum.toLocaleString()}` : ''}。${missingLabels.length ? `资料中未提供：${missingLabels.join('、')}，请补充。` : '请核对后提交平台审核。'}`;
+
+  const categoryNotice = shared ? '' : productCategoryRuleNotice(`${category} ${name}${/新资源食品|新食品原料/.test(raw) ? ' 新资源食品' : ''}`);
+  if (categoryNotice) agentReply = `${agentReply} ${categoryNotice}`;
 
   return {
     draft: {

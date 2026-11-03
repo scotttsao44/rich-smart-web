@@ -693,6 +693,7 @@ export function reviewBrandProduct(user: SessionUser, id: number, decision: 'app
     if (!row) throw new Error('找不到商品');
     if (row.status !== 'pending') throw new Error('该商品已处理，请刷新后再操作');
     if (decision === 'rejected' && !note.trim()) throw new Error('退回时必须填写原因');
+    if (decision === 'approved' && row.listingType !== 'shared_device' && !(Number(row.priceCny) > 0)) throw new Error('商品售价为空或为 0，不能审核通过；请退回或等待品牌方补充价格');
     const now = new Date().toISOString();
     Object.assign(row, { status: decision, reviewStatus: decision, reviewNote: note.trim(), reviewedAt: now, reviewedBy: user.id, isActive: decision === 'approved', salesStatus: decision === 'approved' ? liveSalesStatus(row) : 'draft', updatedAt: now });
     audit(state, user, 'product', row.id, decision === 'approved' ? 'product_approved' : 'product_rejected', note.trim() || '审核通过并上架');
