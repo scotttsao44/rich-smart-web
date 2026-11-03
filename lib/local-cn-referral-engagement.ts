@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'path';
 import type { SessionUser } from './auth';
 import { commerceSnapshot, getWallet } from './local-cn-commerce';
-import { findLocalCnUserById, getFrozenReferrerCode, listLocalCnUsers, normalizeCnReferrerCode } from './local-cn-users';
+import { findLocalCnUserById, getFrozenReferrerCode, listLocalCnUsers, normalizeCnReferrerCode, type LocalCnUser } from './local-cn-users';
+import { sendMpCustomArticle, sendMpCustomImage, sendMpCustomText, sendMpTemplate } from './wechat-mp-api';
 import { getWorkspace } from './local-cn-workspaces';
 import { isPaidEngagementOrder, matchesEngagementMember } from './vendor-member-store-view';
 
@@ -26,7 +27,9 @@ type ReferralReminder = {
   template: 'winback' | 'appointment';
   status: 'sent' | 'skipped';
   reason: string;
-  channel: 'in_app';
+  // in_app：仅站内通知；其余为站内通知 + 服务号渠道（wechat_kefu 客服消息 / wechat_template 模板消息）
+  channel: 'in_app' | 'in_app+wechat_kefu' | 'in_app+wechat_template';
+  wechat?: { status: 'sent' | 'failed' | 'skipped' | 'simulated'; steps: Array<{ type: string; errcode: string }> };
   message: string;
   sentAt: string;
 };
@@ -38,6 +41,8 @@ type MemberNotification = {
   template: 'winback' | 'appointment';
   title: string;
   message: string;
+  imageUrl?: string;
+  linkUrl?: string;
   channel: 'in_app';
   readAt: string | null;
   createdAt: string;
@@ -69,6 +74,110 @@ function dataDir() {
 
 function statePath() {
   return path.join(dataDir(), 'cn-referral-engagement.json');
+}
+
+// 唤醒素材配置：LOCAL_CN_DATA_DIR/mp-wakeup-assets.json（每日文章例行任务会更新）；文件缺失或字段为空时用默认值
+type WakeupAssets = { coverUrl: string; coverMediaId: string; articleId: string; linkUrl: string; linkTitle: string; updatedAt?: string };
+
+const DEFAULT_WAKEUP_ASSETS: WakeupAssets = {
+  coverUrl: '/images/mp/wakeup-device-office-cover.jpg',
+  coverMediaId: 'pRX7sgthfzDxBsjIAQLY6k08PEodwNVR-TP8v130Zm03gy14RGOitddcvQFfcO6K',
+  articleId: '',
+  linkUrl: 'https://rich-smart.com.cn/cn/afu',
+  linkTitle: '阿富同学 · 门店合作',
+};
+
+export function readWakeupAssets(): WakeupAssets {
+  const file = path.join(dataDir(), 'mp-wakeup-assets.json');
+  let parsed: Record<string, unknown> = {};
+  try {
+    if (existsSync(file)) parsed = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    parsed = {};
+  }
+  const pick = (key: keyof WakeupAssets) => {
+    const value = typeof parsed[key] === 'string' ? String(parsed[key]).trim() : '';
+    return value || String(DEFAULT_WAKEUP_ASSETS[key] || '');
+  };
+  return {
+    coverUrl: pick('coverUrl'),
+    coverMediaId: pick('coverMediaId'),
+    articleId: typeof parsed.articleId === 'string' ? parsed.articleId.trim() : '',
+    linkUrl: pick('linkUrl'),
+    linkTitle: pick('linkTitle'),
+    updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : undefined,
+  };
+}
+
+// 链接带发送人自己的推荐码；发送人没有推荐码时沿用成员已绑定的推荐归属；只对本站链接追加 ref
+function wakeupLink(assets: WakeupAssets, sender: SessionUser, recipient: LocalCnUser) {
+  // normalizeCnReferrerCode 对空值会回落到官方码，这里先判空，避免把官方码误当成发送人的码
+  const senderLocal = findLocalCnUserById(sender.id);
+  const own = senderLocal?.referralSharingEnabled === false ? '' : String(senderLocal?.referralCode || sender.referralCode || '').trim();
+  const attributed = String(getFrozenReferrerCode(recipient) || '').trim();
+  const code = own ? normalizeCnReferrerCode(own) : attributed ? normalizeCnReferrerCode(attributed) : '';
+  try {
+    const url = new URL(assets.linkUrl, 'https://rich-smart.com.cn');
+    if (code && /(^|\.)rich-smart\.com\.cn$/.test(url.hostname) && !url.searchParams.get('ref')) url.searchParams.set('ref', code);
+    return url.toString();
+  } catch {
+    return assets.linkUrl;
+  }
+}
+
+function wakeupTemplateConfig() {
+  const templateId = process.env.WECHAT_WAKEUP_TEMPLATE_ID || process.env.WECHAT_KEFU_NOTIFY_TEMPLATE_ID || '';
+  const keys = String(process.env.WECHAT_WAKEUP_TEMPLATE_KEYS || process.env.WECHAT_KEFU_NOTIFY_TEMPLATE_KEYS || 'thing1,thing2,time3').split(',').map((key) => key.trim());
+  return { templateId, keys };
+}
+
+function shortText(text: string, max: number) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+type WechatDelivery = NonNullable<ReferralReminder['wechat']> & { channel: ReferralReminder['channel']; reason: string };
+
+// 服务号：客服文字 + 图文（有 articleId）或图片；客服消息失败（如 45015 超过 48 小时未互动）时，配置了模板 ID 才改发模板消息，否则只记录原因
+async function deliverWakeupWechat(openid: string, input: { senderName: string; title: string; message: string; linkUrl: string; assets: WakeupAssets }): Promise<WechatDelivery> {
+  const steps: Array<{ type: string; errcode: string }> = [];
+  if (/^(SIMULATED_|SIMKB_)/.test(openid)) {
+    return { status: 'simulated', steps: [{ type: 'kefu_text', errcode: 'simulated' }], channel: 'in_app+wechat_kefu', reason: '模拟测试 openid，未真实发送' };
+  }
+  const directList = String(process.env.KEFU_NOTIFY_OPENIDS || '').split(',').map((item) => item.trim()).filter(Boolean);
+  const testTag = directList.includes(openid) ? '【测试】' : '';
+  const text = `${testTag}${input.senderName} 通过富智慧给你发来${input.title}：\n${input.message}\n查看：${input.linkUrl}`;
+  const textResult = await sendMpCustomText(openid, text);
+  steps.push({ type: 'kefu_text', errcode: textResult.ok ? '0' : String(textResult.errcode) });
+  if (textResult.ok) {
+    const media = input.assets.articleId
+      ? { type: 'kefu_article', result: await sendMpCustomArticle(openid, input.assets.articleId) }
+      : input.assets.coverMediaId
+        ? { type: 'kefu_image', result: await sendMpCustomImage(openid, input.assets.coverMediaId) }
+        : null;
+    if (media) steps.push({ type: media.type, errcode: media.result.ok ? '0' : String(media.result.errcode) });
+    const mediaFailed = media && !media.result.ok;
+    return { status: 'sent', steps, channel: 'in_app+wechat_kefu', reason: mediaFailed ? `客服文字已送达，配图失败 errcode=${steps[steps.length - 1].errcode}` : '' };
+  }
+  const { templateId, keys } = wakeupTemplateConfig();
+  if (!templateId) {
+    return { status: 'failed', steps, channel: 'in_app', reason: `客服消息失败 errcode=${textResult.errcode}（45015 为超过 48 小时未互动）；未配置模板消息，仅站内通知` };
+  }
+  const time = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+  const templateResult = await sendMpTemplate(openid, templateId, input.linkUrl, {
+    [keys[0] || 'thing1']: shortText(`${testTag}${input.senderName}的${input.title}`, 18),
+    [keys[1] || 'thing2']: shortText(input.message, 18),
+    [keys[2] || 'time3']: time,
+  });
+  steps.push({ type: 'template', errcode: templateResult.ok ? '0' : String(templateResult.errcode) });
+  if (templateResult.ok) return { status: 'sent', steps, channel: 'in_app+wechat_template', reason: `客服消息失败 errcode=${textResult.errcode}，已改发模板消息` };
+  return { status: 'failed', steps, channel: 'in_app', reason: `客服消息失败 errcode=${textResult.errcode}；模板消息失败 errcode=${templateResult.errcode}；仅站内通知` };
+}
+
+function channelLabel(channel: ReferralReminder['channel']) {
+  if (channel === 'in_app+wechat_kefu') return '站内通知 + 服务号客服消息';
+  if (channel === 'in_app+wechat_template') return '站内通知 + 服务号模板消息';
+  return '站内通知';
 }
 
 function defaultState(): ReferralEngagementState {
@@ -349,6 +458,7 @@ export function getReferralEngagement(user: SessionUser, range: ReferralRange = 
       activityLabel: activity.label,
       nextAction: activity.nextAction,
       lastReminderAt: lastReminder?.sentAt || null,
+      hasWechat: Boolean(member.wechatOfficialOpenId),
       winbackPreview: messageFor('winback', user, member.name),
       appointmentPreview: messageFor('appointment', user, member.name),
     };
@@ -376,6 +486,10 @@ export function getReferralEngagement(user: SessionUser, range: ReferralRange = 
       appointments: appointments.map((row: Record<string, unknown>) => ({ id: row.id, name: row.name || row.customer || '', store: row.store || '', time: row.time || row.date || '', status: row.status || '已预约' })),
     },
     members: memberRows,
+    wakeup: (() => {
+      const assets = readWakeupAssets();
+      return { coverUrl: assets.coverUrl, linkTitle: assets.linkTitle, wechatMedia: assets.articleId ? 'article' : assets.coverMediaId ? 'image' : 'none', templateFallback: Boolean(wakeupTemplateConfig().templateId) };
+    })(),
   };
 }
 
@@ -390,7 +504,7 @@ function messageFor(template: ReferralTemplate, sender: SessionUser, recipientNa
   return `Hi ${safeRecipient}，最近有新的健康服务和商品可以看看。${incomeLine}有空回来看看你的会员中心。`;
 }
 
-export function sendReferralReminders(user: SessionUser, input: { template: ReferralTemplate; recipientIds: number[] }) {
+export async function sendReferralReminders(user: SessionUser, input: { template: ReferralTemplate; recipientIds: number[] }) {
   const referralCode = canonicalReferralCode(user);
   const ids = Array.from(new Set(input.recipientIds.map(Number).filter((id) => Number.isInteger(id) && id > 0)));
   if (!['winback', 'appointment'].includes(input.template)) throw new Error('不支持的提醒模板');
@@ -398,7 +512,10 @@ export function sendReferralReminders(user: SessionUser, input: { template: Refe
   if (ids.length > BATCH_LIMIT) throw new Error(`单次最多发送 ${BATCH_LIMIT} 人`);
   const direct = new Map(directMembers(referralCode).map((member) => [member.id, member]));
   const appointments = referralAppointments(referralCode, Array.from(direct.values()));
-  return mutate((state) => {
+  const assets = readWakeupAssets();
+  const title = input.template === 'appointment' ? '预约提醒' : '会员回流提醒';
+  const queued: Array<{ reminderId: string; openid: string; message: string; linkUrl: string }> = [];
+  const written = mutate((state) => {
     const now = new Date();
     const results = ids.map((id) => {
       const recipient = direct.get(id);
@@ -416,6 +533,7 @@ export function sendReferralReminders(user: SessionUser, input: { template: Refe
       ));
       if (recent) throw new Error(`${recipient.name} 同类提醒仍在 7 天冷却中`);
       const message = messageFor(input.template, user, recipient.name);
+      const linkUrl = wakeupLink(assets, user, recipient);
       const reminder: ReferralReminder = {
         id: `RR-${Date.now()}-${state.reminders.length + 1}`,
         senderId: user.id,
@@ -432,18 +550,45 @@ export function sendReferralReminders(user: SessionUser, input: { template: Refe
         userId: id,
         senderId: user.id,
         template: input.template,
-        title: input.template === 'appointment' ? '预约提醒' : '会员回流提醒',
+        title,
         message,
+        imageUrl: assets.coverUrl,
+        linkUrl,
         channel: 'in_app',
         readAt: null,
         createdAt: now.toISOString(),
       };
       state.reminders.push(reminder);
       state.notifications.unshift(notification);
-      return { recipientId: id, name: recipient.name, status: 'sent', channel: '站内通知', sentAt: reminder.sentAt };
+      if (recipient.wechatOfficialOpenId) queued.push({ reminderId: reminder.id, openid: recipient.wechatOfficialOpenId, message, linkUrl });
+      else reminder.reason = '成员未绑定服务号 openid，仅站内通知';
+      return { recipientId: id, name: recipient.name, status: 'sent', channel: '站内通知', reason: reminder.reason, sentAt: reminder.sentAt };
     });
     return { sent: results };
   });
+  if (!queued.length) return written;
+  const senderName = String(user.name || '你的推荐人').replace(/[<>]/g, '').slice(0, 40);
+  const deliveries = new Map<string, WechatDelivery>();
+  for (const item of queued) {
+    deliveries.set(item.reminderId, await deliverWakeupWechat(item.openid, { senderName, title, message: item.message, linkUrl: item.linkUrl, assets }));
+  }
+  const byRecipient = new Map<number, WechatDelivery>();
+  mutate((state) => {
+    for (const reminder of state.reminders) {
+      const delivery = deliveries.get(reminder.id);
+      if (!delivery) continue;
+      reminder.channel = delivery.channel;
+      reminder.reason = delivery.reason;
+      reminder.wechat = { status: delivery.status, steps: delivery.steps };
+      byRecipient.set(reminder.recipientId, delivery);
+    }
+  });
+  return {
+    sent: written.sent.map((row) => {
+      const delivery = byRecipient.get(row.recipientId);
+      return delivery ? { ...row, channel: delivery.status === 'simulated' ? '站内通知 + 服务号（模拟）' : channelLabel(delivery.channel), reason: delivery.reason } : row;
+    }),
+  };
 }
 
 export function listReferralNotifications(user: SessionUser) {

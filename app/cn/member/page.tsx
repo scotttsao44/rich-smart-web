@@ -41,6 +41,7 @@ type ReferralEngagement = {
   metrics?: Record<string, any>;
   details?: Record<string, WorkspaceRow[]>;
   members?: WorkspaceRow[];
+  wakeup?: { coverUrl?: string; linkTitle?: string; wechatMedia?: 'article' | 'image' | 'none'; templateFallback?: boolean };
 };
 type PromotionQualification = {
   status?: 'not_applied' | 'granted' | 'disabled' | 'not_found';
@@ -53,7 +54,7 @@ type PromotionQualification = {
 type MemberWorkspace = { profile?: WorkspaceRow; metrics?: Array<{ label: string; value: string }>; referralCode?: string; referralPath?: string; referralRelation?: WorkspaceRow | null; referrals?: WorkspaceRow[]; referralEngagement?: ReferralEngagement; appointments?: WorkspaceRow[]; orders?: WorkspaceRow[]; purchases?: WorkspaceRow[]; commissions?: WorkspaceRow[]; health?: WorkspaceRow[]; isDemoData?: boolean };
 type BrandApplication = { brandName: string; status: 'pending' | 'approved' | 'rejected' };
 type PilotIdentity = { memberId?: number | null; nickname?: string; status?: string; createdAt?: string; identityComplete?: boolean } | null;
-type MemberNotification = { id: string; title: string; message: string; readAt?: string | null; createdAt: string };
+type MemberNotification = { id: string; title: string; message: string; imageUrl?: string; linkUrl?: string; readAt?: string | null; createdAt: string };
 
 const monthOptions = ['2026/09', '2026/08', '2026/07'];
 
@@ -244,7 +245,9 @@ export default function ChinaMemberDashboardPage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || '发送失败');
-      setActionMessage(`已写入 ${data.sent?.length || 0} 条站内通知`);
+      const sentRows: Array<{ channel?: string }> = data.sent || [];
+      const wechatCount = sentRows.filter((row) => String(row.channel || '').includes('服务号')).length;
+      setActionMessage(`已写入 ${sentRows.length} 条站内通知${wechatCount ? `，其中 ${wechatCount} 人同时收到服务号消息` : ''}`);
       setPreview(null);
       await reloadEngagement();
     } catch (error) {
@@ -572,13 +575,28 @@ export default function ChinaMemberDashboardPage() {
             </div>
             <div className="divide-y divide-stone-100">
               {notifications.slice(0, 3).map((item) => (
-                <button key={item.id} type="button" onClick={() => markNotificationRead(item.id)} className="block w-full px-5 py-4 text-left transition hover:bg-teal-50">
+                <div key={item.id} role="button" tabIndex={0} onClick={() => markNotificationRead(item.id)} onKeyDown={(event) => { if (event.key === 'Enter') markNotificationRead(item.id); }} className="block w-full cursor-pointer px-5 py-4 text-left transition hover:bg-teal-50">
                   <div className="flex items-center justify-between gap-3">
                     <div className="font-black text-stone-950">{item.title}</div>
                     <span className={`rounded-full px-2 py-1 text-xs font-bold ${item.readAt ? 'bg-stone-100 text-stone-500' : 'bg-teal-50 text-teal-700'}`}>{item.readAt ? '已读' : '未读'}</span>
                   </div>
                   <div className="mt-1 text-sm font-semibold leading-6 text-stone-600">{item.message}</div>
-                </button>
+                  {item.imageUrl || item.linkUrl ? (
+                    <div className="mt-3 overflow-hidden rounded-lg border border-stone-200 bg-stone-50">
+                      {item.imageUrl ? <img src={item.imageUrl} alt="" className="aspect-[900/383] w-full object-cover" loading="lazy" /> : null}
+                      {item.linkUrl ? (
+                        <a
+                          href={item.linkUrl}
+                          onClick={(event) => { event.stopPropagation(); markNotificationRead(item.id); }}
+                          className="flex items-center justify-between gap-2 px-3 py-2 text-sm font-black text-teal-800"
+                        >
+                          查看详情
+                          <ArrowRight className="h-4 w-4" />
+                        </a>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               ))}
             </div>
           </section>
@@ -929,15 +947,34 @@ export default function ChinaMemberDashboardPage() {
         <div className="fixed inset-0 z-50 flex items-end bg-stone-950/40 p-3 md:items-center md:justify-center">
           <section className="w-full max-w-lg rounded-lg bg-white shadow-xl">
             <div className="border-b border-stone-100 px-5 py-4">
-              <h2 className="text-lg font-black text-stone-950">{preview.template === 'appointment' ? '确认发送预约提醒' : '确认发送回流喚醒'}</h2>
-              <p className="mt-1 text-xs font-bold text-stone-500">渠道：站内通知。微信提醒建置中，本次不会假装发送微信。</p>
+              <h2 className="text-lg font-black text-stone-950">{preview.template === 'appointment' ? '确认发送预约提醒' : '确认发送回流唤醒'}</h2>
+              {(() => {
+                const wechatCount = preview.recipients.filter((row) => row.hasWechat === true).length;
+                const wakeup = engagement.wakeup || {};
+                return (
+                  <>
+                    <p className="mt-1 text-xs font-bold leading-5 text-stone-500">
+                      渠道：站内通知（{preview.recipients.length} 人）
+                      {wechatCount
+                        ? ` + 服务号消息（已绑定服务号 ${wechatCount} 人，文字${wakeup.wechatMedia === 'article' ? ' + 图文' : wakeup.wechatMedia === 'image' ? ' + 图片' : ''}）。对方超过 48 小时未与服务号互动时${wakeup.templateFallback ? '改发模板消息' : '服务号消息会失败，只保留站内通知并记录原因'}。`
+                        : '。所选成员都未绑定服务号，本次只发站内通知。'}
+                    </p>
+                    {wakeup.coverUrl ? (
+                      <div className="mt-3 overflow-hidden rounded-lg border border-stone-200">
+                        <img src={wakeup.coverUrl} alt="通知封面预览" className="aspect-[900/383] w-full object-cover" />
+                        <div className="px-3 py-2 text-xs font-bold text-stone-500">封面预览 · 链接：{wakeup.linkTitle || '最新内容'}</div>
+                      </div>
+                    ) : null}
+                  </>
+                );
+              })()}
             </div>
             <div className="max-h-[60vh] overflow-y-auto px-5 py-4">
               <div className="text-sm font-black text-stone-950">收件对象 {preview.recipients.length} 人</div>
               <div className="mt-3 grid gap-2">
                 {preview.recipients.map((row) => (
                   <div key={row.id} className="rounded-lg bg-stone-50 p-3">
-                    <div className="font-black text-stone-950">{row.name} · memberId {row.memberId}</div>
+                    <div className="font-black text-stone-950">{row.name} · memberId {row.memberId}{row.hasWechat === true ? ' · 服务号' : ''}</div>
                     <div className="mt-2 text-sm font-semibold leading-6 text-stone-600">{previewText(preview.template, row)}</div>
                   </div>
                 ))}
@@ -947,7 +984,7 @@ export default function ChinaMemberDashboardPage() {
               <button type="button" onClick={() => setPreview(null)} className="rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-bold text-stone-800">取消</button>
               <button type="button" onClick={sendReminder} disabled={sending} className="inline-flex items-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
                 <Send className="h-4 w-4" />
-                {sending ? '发送中' : '确认写入通知'}
+                {sending ? '发送中' : '确认发送'}
               </button>
             </div>
           </section>

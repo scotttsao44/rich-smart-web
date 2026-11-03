@@ -64,6 +64,16 @@ export function sendMpCustomText(openid: string, content: string) {
   return postWithToken('/cgi-bin/message/custom/send', { touser: openid, msgtype: 'text', text: { content } });
 }
 
+// 客服图片消息：media_id 为永久素材（material/add_material type=image）
+export function sendMpCustomImage(openid: string, mediaId: string) {
+  return postWithToken('/cgi-bin/message/custom/send', { touser: openid, msgtype: 'image', image: { media_id: mediaId } });
+}
+
+// 客服图文消息：article_id 为已发表文章（freepublish 返回的 article_id）
+export function sendMpCustomArticle(openid: string, articleId: string) {
+  return postWithToken('/cgi-bin/message/custom/send', { touser: openid, msgtype: 'mpnewsarticle', mpnewsarticle: { article_id: articleId } });
+}
+
 export function sendMpTemplate(openid: string, templateId: string, url: string, data: Record<string, string>) {
   const payload: Record<string, { value: string }> = {};
   for (const [k, v] of Object.entries(data)) payload[k] = { value: v };

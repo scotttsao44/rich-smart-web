@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const template = String(body.template || '') as ReferralTemplate;
     const recipientIds = Array.isArray(body.recipientIds) ? body.recipientIds : [];
-    return NextResponse.json(sendReferralReminders(user, { template, recipientIds }), { status: 201 });
+    return NextResponse.json(await sendReferralReminders(user, { template, recipientIds }), { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : '提醒发送失败' }, { status: 400 });
   }
