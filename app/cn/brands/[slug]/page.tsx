@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { BrandPageRenderer } from '@/components/brand-page/BrandPageRenderer';
 import { getApprovedBrandBySlug, getBrandPageRecord, listPublicBrandProducts } from '@/lib/local-cn-brand-marketplace';
 import { experiencePointForBrand } from '@/lib/cn-experience-points';
+import CnReferralCapture from '@/components/CnReferralCapture';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,6 +19,7 @@ export default function ApprovedBrandFrontPage({ params }: { params: { slug: str
     .map(({ id, name, category, description, imageUrl, priceCny, compareAtPrice, stockQuantity, createdAt, listingType }) => ({ id, name, category, description, imageUrl, priceCny, compareAtPrice, stockQuantity, createdAt, listingType: listingType === 'shared_device' ? 'shared_device' : null }));
 
   return <main className="min-h-screen bg-[#e9ece8] text-stone-950">
+    <CnReferralCapture />
     <header className="sticky top-0 z-40 border-b border-stone-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4">
         <Link href="/cn/shop" className="flex h-10 w-10 items-center justify-center" aria-label="返回商城"><ArrowLeft className="h-5 w-5" /></Link>

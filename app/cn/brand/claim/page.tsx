@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { CheckCircle2, ShieldCheck, Store } from 'lucide-react';
+import CnReferralCapture from '@/components/CnReferralCapture';
 
 type ClaimInfo = { status: 'pending' | 'claimed' | 'revoked' | 'expired'; expiresAt: string; brandId: number; brandName: string; claimedBy: number | null };
 type Viewer = { loggedIn: boolean; memberId?: number; name?: string; hasWechat?: boolean; isPilot?: boolean; isAdmin?: boolean; ownedBrandIds?: number[] };
@@ -24,6 +25,7 @@ export default function BrandClaimPage() {
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
   const [inWechat, setInWechat] = useState(false);
+  const [refCode, setRefCode] = useState('');
 
   const load = useCallback(async (t: string) => {
     setLoading(true);
@@ -40,17 +42,21 @@ export default function BrandClaimPage() {
   }, []);
 
   useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get('t') || '';
+    const search = new URLSearchParams(window.location.search);
+    const t = search.get('t') || '';
+    setRefCode((search.get('ref') || search.get('r') || '').trim().toUpperCase());
     setToken(t);
     setInWechat(/micromessenger/i.test(navigator.userAgent || ''));
     if (t) void load(t);
     else setLoading(false);
   }, [load]);
 
-  const returnTo = `/cn/brand/claim?t=${encodeURIComponent(token)}`;
+  // 推荐码随认领流程一路带到登录（沿用现有 ref 参数），登录/注册时由现有归属逻辑绑定上线
+  const refQuery = refCode ? `&ref=${encodeURIComponent(refCode)}` : '';
+  const returnTo = `/cn/brand/claim?t=${encodeURIComponent(token)}${refQuery}`;
   const loginHref = inWechat
-    ? `/api/auth/wechat/official/start?returnTo=${encodeURIComponent(returnTo)}`
-    : `/cn/login?returnTo=${encodeURIComponent(returnTo)}`;
+    ? `/api/auth/wechat/official/start?returnTo=${encodeURIComponent(returnTo)}${refQuery}`
+    : `/cn/login?returnTo=${encodeURIComponent(returnTo)}${refQuery}`;
 
   const confirmClaim = async () => {
     setBusy(true);
@@ -87,6 +93,7 @@ export default function BrandClaimPage() {
 
   return (
     <main className="min-h-screen bg-[#f5f2ea] px-4 py-8 text-stone-950">
+      <CnReferralCapture />
       <div className="mx-auto max-w-lg">
         <div className="flex items-center gap-3">
           <Store className="h-8 w-8 text-teal-700" />

@@ -9,6 +9,7 @@ import { formatCny, getCnyPrice } from '@/lib/cn-market';
 import { PublicProduct } from '@/lib/product-public';
 import ShopProductImage from '@/components/ShopProductImage';
 import SharedDeviceLeadForm from '@/components/SharedDeviceLeadForm';
+import CnReferralCapture from '@/components/CnReferralCapture';
 
 export default function ProductDetailClient({ product }: { product: PublicProduct }) {
   const searchParams = useSearchParams();
@@ -44,6 +45,7 @@ export default function ProductDetailClient({ product }: { product: PublicProduc
 
   return (
     <main className="min-h-screen bg-[#f7f3ea]">
+      <CnReferralCapture />
       <div className="mx-auto max-w-6xl px-4 py-8">
         <Link href="/cn/shop" className="mb-6 inline-flex items-center gap-1 text-sm font-semibold text-gray-500 hover:text-amber-700">
           <ArrowLeft size={16} />

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Brain, CheckCircle2, Clock3, Edit3, PackagePlus, Sparkles, Store, XCircle, Zap } from 'lucide-react';
 import ProductLeadList from '@/components/ProductLeadList';
+import { useAuth } from '@/app/providers';
 
 type VendorProduct = {
   id: number;
@@ -44,6 +45,16 @@ export default function VendorDashboardPage() {
   const [quickPrompt, setQuickPrompt] = useState('');
   const [quickPublishing, setQuickPublishing] = useState(false);
   const [application, setApplication] = useState<{ status?: string; brandName?: string } | null>(null);
+  const { user } = useAuth();
+  const [shareOrigin, setShareOrigin] = useState('https://rich-smart.com.cn');
+  const [copiedShare, setCopiedShare] = useState('');
+  useEffect(() => { setShareOrigin(window.location.origin); }, []);
+  // 品牌方转发链接一律带「自己」的会员推荐码（现有 ref 参数），打开者归属记到品牌方本人
+  const myRefCode = String(user?.referralCode || '').trim();
+  const withMyRef = (path: string) => `${shareOrigin}${path}${myRefCode ? `${path.includes('?') ? '&' : '?'}ref=${encodeURIComponent(myRefCode)}` : ''}`;
+  const copyShare = async (key: string, url: string) => {
+    try { await navigator.clipboard.writeText(url); setCopiedShare(key); setTimeout(() => setCopiedShare(''), 2000); } catch { /* ignore */ }
+  };
 
   const loadData = () => {
     setLoading(true);
@@ -200,6 +211,17 @@ export default function VendorDashboardPage() {
               </div>
             </div>
             {brand.reviewNote ? <p className="mt-3 rounded-lg bg-stone-50 p-3 text-sm"><strong>平台备注：</strong>{brand.reviewNote}</p> : null}
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">
+              <div className="font-black text-emerald-900">我的品牌转发链接{myRefCode ? `（带我的推荐码 ${myRefCode}）` : ''}</div>
+              {myRefCode ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <code className="break-all rounded bg-white px-2 py-1 text-xs text-stone-800">{withMyRef(`/cn/brands/${encodeURIComponent(String(brand.slug || '').trim() || String(brand.id))}`)}</code>
+                  <button type="button" onClick={() => void copyShare('brand', withMyRef(`/cn/brands/${encodeURIComponent(String(brand.slug || '').trim() || String(brand.id))}`))} className="rounded-lg bg-emerald-700 px-3 py-1 text-xs font-black text-white">{copiedShare === 'brand' ? '已复制' : '复制链接'}</button>
+                </div>
+              ) : (
+                <p className="mt-1 text-stone-700">当前账号尚未开通推荐码，请到 <Link href="/cn/member/share" className="font-black text-teal-800 underline">推广工作台</Link> 查看。</p>
+              )}
+            </div>
           </section>
         ) : null}
 
@@ -229,6 +251,11 @@ export default function VendorDashboardPage() {
                     <span className={`inline-flex items-center gap-1 rounded-lg border px-3 py-1 text-xs font-black ${status.className}`}>
                       <Icon className="h-4 w-4" />{status.label}
                     </span>
+                    {myRefCode && product.reviewStatus === 'approved' ? (
+                      <button type="button" onClick={() => void copyShare(`p${product.id}`, withMyRef(`/cn/shop/${product.id}`))} className="rounded-lg border border-emerald-700 px-3 py-1.5 text-xs font-black text-emerald-800">
+                        {copiedShare === `p${product.id}` ? '已复制' : '复制转发链接'}
+                      </button>
+                    ) : null}
                     <Link
                       href={editHref}
                       className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3.5 py-1.5 text-xs font-black text-white shadow-sm hover:bg-teal-800"

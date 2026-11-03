@@ -273,7 +273,7 @@ export function claimBrandWithToken(user: SessionUser | null | undefined, token:
     row.claimedAt = now;
     row.claimedBy = user.id;
     row.previousOwner = transfer;
-    addAudit(next, { action: 'claim_link.claimed', actorId: user.id, brandId: claim.brandId, refId: claim.id, detail: `微信会员 ${user.id} 认领品牌；原负责人 ${transfer.accountUserId ?? '-'} 已移除品牌权限` });
+    addAudit(next, { action: 'claim_link.claimed', actorId: user.id, brandId: claim.brandId, refId: claim.id, detail: `微信会员 ${user.id} 认领品牌；原负责人 ${transfer.accountUserId ?? '-'} 已移除品牌权限；认领者上线 ${findLocalCnUserById(user.id)?.referredByMemberId ?? '待确认'}` });
   });
 
   const previousIds = Array.from(new Set([transfer.accountUserId, transfer.applicantUserId].filter((id): id is number => Boolean(id) && id !== user.id)));
