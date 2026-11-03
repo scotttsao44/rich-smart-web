@@ -404,7 +404,8 @@ export const KEFU_STORES: Array<{ city: string; names: string[] }> = [
 const KEFU_EXTRA_STORES_TEXT = EXPERIENCE_POINTS.map((point) => `${point.city}的${point.kefuLabel}`).join('、');
 export function kefuStoresLine(city = '') {
   const hit = KEFU_STORES.find((x) => city && (x.city === city || city.includes(x.city)));
-  if (hit && hit.names.length) return `${hit.city}目前可以体验的合作门店：${hit.names.join('、')}。`;
+  const hitNames = hit ? KEFU_STORES.filter((x) => x.city === hit.city).flatMap((x) => x.names) : [];
+  if (hit && hitNames.length) return `${hit.city}目前可以体验的合作门店：${hitNames.join('、')}。`;
   if (hit) return `${hit.city}${hit.city === '南京' ? '（高淳）' : ''}有合作体验点。`;
   const all = `目前公开的合作体验点：苏州的${KEFU_STORES[0].names.join('、')}${KEFU_EXTRA_STORES_TEXT ? `；${KEFU_EXTRA_STORES_TEXT}` : ''}；济南、南京（高淳）也有合作体验点。`;
   return city ? `${all}${city}的体验点需要客服同事帮您确认。` : all;

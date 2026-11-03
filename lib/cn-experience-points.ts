@@ -24,6 +24,15 @@ export const EXPERIENCE_POINTS: ExperiencePoint[] = [
     brandSlug: 'zhongkang-zhongshu',
     source: '叶荣德 2026-09-04 私聊；王建民 2026-09-07「频率激活华南群」；曹总 2026-11-03 确认',
   },
+  {
+    id: 'suzhou-liangyuan',
+    city: '苏州',
+    kefuLabel: '量元能量空间（姑苏区）',
+    operator: '量元健康（苏州合量元文化发展有限公司）· 量元能量空间 宝元工作室',
+    publicAddress: '江苏省苏州市姑苏区前宝元街23号（量元能量空间 宝元工作室）',
+    brandSlug: 'liangyuan-health',
+    source: '量元健康品牌资料 PDF 第 42 页宣传单页；2026-11-03 平台代建登记，待苏老师认领时确认',
+  },
 ];
 
 export function experiencePointForBrand(slug: string) {
