@@ -19,7 +19,6 @@ import { sendMpCustomText } from '@/lib/wechat-mp-api';
 export const STORE_APPLY_SCENE = 'store_apply';
 const COLLECT_MS = 7 * 24 * 60 * 60 * 1000;
 const CORRECT_MS = 24 * 60 * 60 * 1000;
-const RE_MOBILE = /(?<!\d)1[3-9]\d{9}(?!\d)/;
 const RE_QUESTION = /(多少|什么|怎么|咋|哪|吗|呢|么|几|多久|多长|能不能|可不可以|是不是|有没有|要不要|[?？])/;
 
 export const STORE_APPLY_TEMPLATE = [
@@ -102,21 +101,60 @@ export async function startStoreApply(openid: string, eventKey: string, via: 'su
 
 function segmentsOf(text: string) {
   return text
-    .split(/[\n，,；;。]+/)
+    .split(/[\n，,；;。！!？?]+/)
     .map((s) => s.replace(/^\s*(?:\d{1,2}|[一二三四五六])\s*[.、)）．]\s*/, '').trim())
     .filter(Boolean);
 }
 
 const RE_STORE_WORD = /(店|馆|院|会所|中心|工作室|堂|驿站|站|公司|门诊|诊所|药房|超市|俱乐部|空间|社区|酒店|养老)/;
-const RE_AREA = /(\d+(?:\.\d+)?|[一二三四五六七八九十百千两]+)\s*(?:平方米|平米|平方|㎡|m²|m2|平)/i;
+// 面积：100平／100平米／100平方／100平方米／100方／100多平方米／一百平／一百五十平米／100㎡
+const CN_NUM = '零〇一二两三四五六七八九十百千';
+const RE_AREA = new RegExp(`(?:大概|大约|约|差不多|有)?\\s*(\\d+(?:\\.\\d+)?|[${CN_NUM}]+)\\s*(多|来|几十)?\\s*(?:个)?\\s*(?:平方米|平方公尺|平米|平方|㎡|m²|m2|平(?![安台常时均衡价])|方(?![式便法向面案言子圆]))`, 'i');
 const RE_CONTACT_SUFFIX = /(?<![\u4e00-\u9fa5])([\u4e00-\u9fa5]{1,3}?(?:先生|女士|小姐|老师|总|经理|老板))(?![\u4e00-\u9fa5])/;
+// 手机号：11 位，可带 +86、空格、横线、点分隔
+const RE_PHONE_LOOSE = /(?<!\d)(?:\+?86[\s-]?)?(1[3-9]\d(?:[ \t\u3000\-－—.·]?\d){8})(?!\d)/;
+const RE_PHONE_DECLINE = /(手机|电话|号码)[^。]{0,6}(保密|不方便|不想留|不留|不给)|(不方便|不想)[^，,。]{0,4}留(手机|电话)|有事微信(联系|联络|找我)/;
+const PHONE_DECLINED = '暂不提供（请在服务号对话里联系）';
+const PROVINCES = ['北京', '天津', '上海', '重庆', '河北', '山西', '辽宁', '吉林', '黑龙江', '江苏', '浙江', '安徽', '福建', '江西', '山东', '河南', '湖北', '湖南', '广东', '海南', '四川', '贵州', '云南', '陕西', '甘肃', '青海', '台湾', '内蒙古', '广西', '西藏', '宁夏', '新疆', '香港', '澳门'];
+
+function cnNumber(raw: string) {
+  if (/^\d/.test(raw)) return raw;
+  const digit: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  const unit: Record<string, number> = { 十: 10, 百: 100, 千: 1000 };
+  let total = 0;
+  let cur = 0;
+  for (const ch of raw) {
+    if (ch in digit) cur = digit[ch];
+    else if (ch in unit) { total += (cur || 1) * unit[ch]; cur = 0; }
+  }
+  total += cur;
+  return total > 0 ? String(total) : '';
+}
+
+function areaOf(text: string) {
+  const m = text.match(RE_AREA);
+  if (!m) return '';
+  const n = cnNumber(m[1]);
+  if (!n || Number(n) <= 0 || Number(n) > 100000) return '';
+  return `${n}${m[2] === '多' || m[2] === '来' ? '多' : ''}平方米`;
+}
+
+function contactOf(seg: string) {
+  const named = seg.match(/(?:我是|我叫|本人|联系人是?|找)([\u4e00-\u9fa5]{1,3}?(?:先生|女士|小姐|老师|总|经理|老板))/)?.[1] || seg.match(RE_CONTACT_SUFFIX)?.[1];
+  if (named) return named;
+  const surname = seg.match(/(?:我|本人|免贵)?姓([\u4e00-\u9fa5])(?![名氏])/)?.[1];
+  if (surname) return `${surname}（姓）`;
+  const name = seg.match(/(?:我叫|我的名字是|名字叫)([\u4e00-\u9fa5]{2,3})(?=$|[，,。\s]|[，,]?手机)/)?.[1];
+  return name || '';
+}
 
 export function parseStoreApplyText(raw: string, cities: string[]) {
   const text = kefuToSimplified(String(raw || ''));
   const out: Partial<KefuStoreApply['fields']> = {};
-  const digits = text.replace(/[ \t\u3000-]/g, ''); // 保留换行，避免编号（如「5.」）粘到手机号后面
-  const phone = digits.match(RE_MOBILE)?.[0];
-  if (phone) out.phone = phone;
+  const phoneM = text.match(RE_PHONE_LOOSE);
+  const phone = phoneM ? phoneM[1].replace(/\D/g, '') : '';
+  if (phone.length === 11) out.phone = phone;
+  else if (RE_PHONE_DECLINE.test(text)) out.phone = PHONE_DECLINED;
 
   const modes: string[] = [];
   if (/投放/.test(text)) modes.push('投放合作');
@@ -124,39 +162,70 @@ export function parseStoreApplyText(raw: string, cities: string[]) {
   if (/了解/.test(text)) modes.push('了解一下');
   if (modes.length) out.mode = modes.join('／');
 
-  const area = text.match(RE_AREA);
-  if (area) out.area = `${area[1]}平方米`;
+  const area = areaOf(text);
+  if (area) out.area = area;
 
   for (const seg0 of segmentsOf(text)) {
     let seg = seg0;
     const label = seg.match(/^(所在城市|城市|门店名称与类型|门店名称和类型|门店名称|名称|店名|门店类型|类型|门店面积|面积|联系人称呼|联系人|称呼|手机号|手机|电话|合作方式|想合作的方式|方式)\s*[:：]?\s*/);
     const key = label?.[1] || '';
     if (label) seg = seg.slice(label[0].length).trim();
-    const segNoPhone = seg.replace(/1[3-9]\d[\s-]?\d{4}[\s-]?\d{4}/g, '').replace(/\d{3,}/g, '').trim();
+    const segNoPhone = seg.replace(RE_PHONE_LOOSE, '').replace(/\d{3,}/g, '').trim();
     if (!seg) continue;
     if (/城市/.test(key)) { out.city = seg.slice(0, 20); continue; }
     if (/面积/.test(key)) { out.area = out.area || seg.slice(0, 20); continue; }
     if (/方式/.test(key)) { out.mode = out.mode || seg.slice(0, 20); continue; }
-    if (/联系人|称呼/.test(key)) { if (segNoPhone) out.contact = segNoPhone.slice(0, 12); continue; }
+    if (/联系人|称呼/.test(key)) { if (segNoPhone) out.contact = (contactOf(segNoPhone) || segNoPhone).slice(0, 12); continue; }
     if (/名称|店名|类型/.test(key)) { out.store = (out.store && key.includes('类型') && !key.includes('名称') ? `${out.store}（${seg}）` : seg).slice(0, 40); continue; }
     if (/手机|电话/.test(key)) continue;
 
     // 无标签：逐段判断
     const city = cities.find((x) => seg === x || seg === `${x}市`) || seg.match(/^(?:我在)?([\u4e00-\u9fa5]{2,4}?)市$/)?.[1];
     if (city && !out.city) { out.city = city; continue; }
-    const contact = segNoPhone.match(/^(?:我是|我叫|我姓|姓)?([\u4e00-\u9fa5]{1,3}?(?:先生|女士|小姐|老师|总|经理|老板))$/)?.[1] || segNoPhone.match(RE_CONTACT_SUFFIX)?.[1];
-    if (contact && !out.contact) { out.contact = contact; if (segNoPhone.replace(contact, '').replace(/^(我是|我叫|我姓|姓|联系人)/, '').trim() === '') continue; }
+    const contact = contactOf(segNoPhone);
+    if (contact && !out.contact) { out.contact = contact; if (segNoPhone.replace(/(我是|我叫|本人|免贵|我姓|姓|联系人是?)/, '').replace(contact.replace('（姓）', ''), '').trim() === '') continue; }
     if (!out.contact && phone && seg.includes(phone.slice(0, 3)) && /^[\u4e00-\u9fa5]{1,4}$/.test(segNoPhone)) { out.contact = segNoPhone; continue; }
-    if (!out.store && RE_STORE_WORD.test(segNoPhone) && !RE_AREA.test(segNoPhone) && segNoPhone.length >= 2 && !/^(投放|购机|了解)/.test(segNoPhone)) {
+    // 还没有门店、店面在装修／筹备：记为筹备中，不把整句当店名
+    if (!out.store && /(装修|筹备|在建|还没开|准备开|即将开)/.test(segNoPhone) && /(店|铺|门面|场地|馆)/.test(segNoPhone)) {
+      out.store = `筹备中（${segNoPhone.replace(/^(但是|不过|目前|现在|我们|我)+/, '')}）`.slice(0, 40);
+      continue;
+    }
+    if (/^(目前|现在|暂时|还)?(没有|没)/.test(segNoPhone)) continue;
+    if (!out.store && RE_STORE_WORD.test(segNoPhone) && !RE_AREA.test(segNoPhone) && segNoPhone.length >= 2 && segNoPhone.length <= 30 && !/^(投放|购机|了解)/.test(segNoPhone) && !/(客服|联系|咨询|需要|付|钱|费用|吗|呢)/.test(segNoPhone)) {
       out.store = segNoPhone.replace(/^(门店是|店名是|店叫|我们是|我们店是|我开的是|我家是)/, '').slice(0, 40);
       continue;
     }
   }
   if (!out.city) {
-    const city = cities.find((x) => text.includes(x)) || text.match(/我在([\u4e00-\u9fa5]{2,4}?)(?:市|这边|附近|开|有|[，,。\s]|$)/)?.[1];
-    if (city) out.city = city;
+    const city = cities.find((x) => text.includes(x))
+      || text.match(/(?:我在|人在|位于|坐标)([\u4e00-\u9fa5]{2,4}?)(?:市|省|这边|附近|开|有|[，,。\s]|$)/)?.[1]
+      || PROVINCES.find((x) => text.includes(x));
+    if (city && !/^(咨询|考虑|了解|问|想)/.test(city)) out.city = city;
   }
   return out;
+}
+
+const RE_CORRECTION = /(更正|改成|改为|改一下|应该是|写错|说错|不对，|更改)/;
+
+// 把门店申请开始后客人发过的所有文字（含本条）按时间顺序合并：后说的覆盖先说的，但真实手机号不会被「保密」覆盖
+function mergedFieldsFromHistory(conv: NonNullable<ReturnType<typeof getKefuConversation>>, cities: string[]) {
+  const sa = conv.storeApply!;
+  const since = Date.parse(sa.startedAt) - 1000;
+  const fields: KefuStoreApply['fields'] = { ...sa.fields };
+  for (const m of conv.messages) {
+    if (m.role !== 'user' || m.type !== 'text' || !m.text || Date.parse(m.at) < since) continue;
+    const p = parseStoreApplyText(m.text, cities);
+    const correction = RE_CORRECTION.test(kefuToSimplified(m.text));
+    for (const k of FIELD_ORDER) {
+      const v = p[k];
+      if (!v) continue;
+      if (k === 'phone' && v === PHONE_DECLINED && fields.phone && fields.phone !== PHONE_DECLINED) continue;
+      // 先给的为准（避免后面闲聊里提到的城市等覆盖）；客人明确更正、或之前是待定／未给真实手机号时才覆盖
+      if (fields[k] && fields[k] !== '待定' && fields[k] !== PHONE_DECLINED && !correction) continue;
+      fields[k] = v;
+    }
+  }
+  return fields;
 }
 
 function missingOf(fields: KefuStoreApply['fields']) {
@@ -179,62 +248,110 @@ function passive(openid: string, text: string, tag: string) {
   return text;
 }
 
-function submit(openid: string, userText: string, correction: boolean) {
+// 记录提交（状态、系统消息）；notify=false 时由调用方负责通知（例如转人工流程）
+function recordSubmit(openid: string, viaHuman = false, correction = false) {
   const conv = updateKefuConversation(openid, (c) => {
     if (!c.storeApply) return;
     c.storeApply.status = 'submitted';
     c.storeApply.submittedAt = new Date().toISOString();
   });
   const sa = conv.storeApply!;
-  const f = sa.fields;
+  const detail = detailOf(sa);
   const ref = sa.referrerId ? `推荐人会员 ${sa.referrerId}` : '来源待确认';
-  const detail = `${f.city || '城市未填'} ${f.phone || '手机未填'}｜门店：${f.store || '未填'}｜面积：${f.area || '未填'}｜联系人：${f.contact || '未填'}｜方式：${f.mode || '未填'}｜${ref}`;
-  appendKefuMessage(openid, { role: 'system', type: 'store_apply', tag: correction ? 'store_apply_update' : 'store_apply', text: `门店申请${correction ? '（更正/补充）' : ''}：${summaryLines(f).join('；')}；${ref}；二维码 ${sa.scene}` });
-  appendKefuMessage(openid, { role: 'system', type: 'lead_notify', tag: `store_apply:${f.phone || 'nophone'}`, text: `已通知客服：门店申请（${detail}）` });
+  appendKefuMessage(openid, { role: 'system', type: 'store_apply', tag: correction ? 'store_apply_update' : 'store_apply', text: `门店申请${correction ? '（更正/补充）' : viaHuman ? '（客人要求人工）' : ''}：${summaryLines(sa.fields).join('；')}；${ref}；二维码 ${sa.scene}` });
+  appendKefuMessage(openid, { role: 'system', type: 'lead_notify', tag: 'store_apply', text: `已通知客服：门店申请（${detail}）` });
+  return detail;
+}
+
+function submit(openid: string, userText: string, correction: boolean) {
+  const detail = recordSubmit(openid, false, correction);
   const fresh = getKefuConversation(openid);
   if (fresh) notifyKefuHandoff(fresh, correction ? '门店申请更正（服务号扫码）' : '门店申请（服务号扫码）', userText, { force: true, detail }).catch(() => console.warn('[wechat-kefu] store apply notify error'));
 }
 
-// 会话处于门店申请收集中时处理客人文字；返回 null 表示交回原有客服流程（例如客人改问其他问题、要人工）
-export function continueStoreApply(openid: string, text: string, opts: { cities: string[]; human: boolean }): string | null {
+const RE_ALREADY = /(已经(给|说|留|发|填|讲)|不是说|不是已经|说过了|讲过了|留过|给过|发过|刚才说|上面说|前面说)/;
+const RE_WANT_CONTACT = /(客服|你们|工作人员).{0,8}(联系|联络|打给|回电|加我|找我)/;
+
+function activeStoreApply(openid: string) {
   const conv = getKefuConversation(openid);
   const sa = conv?.storeApply;
-  if (!sa || opts.human) return null;
+  if (!conv || !sa) return null;
   const now = Date.now();
   const collecting = sa.status === 'collecting' && now - Date.parse(sa.startedAt) < COLLECT_MS;
-  const correcting = sa.status === 'submitted' && sa.submittedAt && now - Date.parse(sa.submittedAt) < CORRECT_MS;
+  const correcting = sa.status === 'submitted' && !!sa.submittedAt && now - Date.parse(sa.submittedAt) < CORRECT_MS;
   if (!collecting && !correcting) return null;
+  return { conv, sa, collecting, correcting };
+}
+
+// 客人在门店申请期间要求人工：合并所有已给信息，未提交的直接标记提交，返回给客服通知用的线索摘要（由原有转人工流程强制通知）
+export function storeApplyHandoffDetail(openid: string, cities: string[]) {
+  const st = activeStoreApply(openid);
+  if (!st) return null;
+  const fields = mergedFieldsFromHistory(st.conv, cities);
+  updateKefuConversation(openid, (c) => { if (c.storeApply) c.storeApply.fields = fields; });
+  if (st.collecting) recordSubmit(openid, true);
+  const sa = getKefuConversation(openid)!.storeApply!;
+  return `门店申请·客人要求人工｜${detailOf(sa)}`;
+}
+
+function detailOf(sa: KefuStoreApply) {
+  const f = sa.fields;
+  const ref = sa.referrerId ? `推荐人会员 ${sa.referrerId}` : '来源待确认';
+  return `${f.city || '城市未填'} ${f.phone || '手机未填'}｜门店：${f.store || '未填'}｜面积：${f.area || '未填'}｜联系人：${f.contact || '未填'}｜方式：${f.mode || '未填'}｜${ref}`;
+}
+
+// 会话处于门店申请收集中时处理客人文字；返回 null 表示交回原有客服流程（例如客人改问其他问题、要人工）
+export function continueStoreApply(openid: string, text: string, opts: { cities: string[]; human: boolean }): string | null {
+  const st = activeStoreApply(openid);
+  if (!st || opts.human) return null; // 要人工：交给原流程转人工（会调用 storeApplyHandoffDetail 带上申请信息并强制通知）
+  const { collecting, correcting } = st;
 
   const parsed = parseStoreApplyText(text, opts.cities);
-  const gotAny = Object.keys(parsed).length > 0;
   const simple = kefuToSimplified(text);
-  if (!gotAny && RE_QUESTION.test(simple)) return null; // 客人在问别的问题，交给原流程回答，收集状态保留
+  const coreNow = Boolean(parsed.phone || parsed.area || parsed.contact);
+  const already = RE_ALREADY.test(simple);
+  const isQuestion = RE_QUESTION.test(simple) && !coreNow && !already; // 只是提问（顺带出现「投放」等词也算），交给原流程回答
+  const before = st.sa.fields;
+  const merged = mergedFieldsFromHistory(st.conv, opts.cities);
+  const changed = FIELD_ORDER.some((k) => merged[k] !== before[k]);
+  updateKefuConversation(openid, (c) => { if (c.storeApply) c.storeApply.fields = merged; });
+
   if (correcting) {
-    if (!gotAny || RE_QUESTION.test(simple)) return null;
-    updateKefuConversation(openid, (c) => { if (c.storeApply) c.storeApply.fields = { ...c.storeApply.fields, ...parsed }; });
+    if (!changed && already) {
+      return passive(openid, `抱歉让您重复了！您给的信息都已记下：\n${summaryLines(st.sa.fields).join('\n')}\n已转给客服同事，会尽快与您联系。`, 'store_apply_done');
+    }
+    if (!changed || isQuestion) return null;
     submit(openid, text, true);
     return passive(openid, `已更新您的门店申请信息：\n${summaryLines(getKefuConversation(openid)!.storeApply!.fields).join('\n')}\n已同步给客服同事。`, 'store_apply_done');
   }
+  if (!collecting) return null;
 
   const unsure = /(不清楚|不确定|不知道|还没定|待定|暂时没有|没想好)/.test(simple);
-  const updated = updateKefuConversation(openid, (c) => {
-    if (!c.storeApply) return;
-    const before = missingOf(c.storeApply.fields);
-    c.storeApply.fields = { ...c.storeApply.fields, ...parsed };
-    // 客人对上一轮追问的项表示「不确定」：记为待定，不再反复追问
-    if (unsure && c.storeApply.asks > 0) {
-      for (const k of before) if (!c.storeApply.fields[k] && (k === 'area' || k === 'mode' || k === 'store')) c.storeApply.fields[k] = '待定';
-    }
-  });
+  if (unsure && st.sa.asks > 0) {
+    updateKefuConversation(openid, (c) => {
+      if (!c.storeApply) return;
+      for (const k of ['area', 'mode', 'store'] as const) if (!c.storeApply.fields[k]) c.storeApply.fields[k] = '待定';
+    });
+  }
+  const updated = getKefuConversation(openid)!;
   const fields = updated.storeApply!.fields;
   const missing = missingOf(fields);
   const asks = updated.storeApply!.asks;
-  // 齐全就提交；追问过两轮后，只要有手机号就先提交，缺的项由客服电话补问
-  if (missing.length === 0 || (asks >= 2 && fields.phone)) {
+
+  if (isQuestion) {
+    // 已追问过一次且有手机号：先把申请交给客服（通知），问题照常由原流程回答
+    if (asks >= 1 && fields.phone) submit(openid, text, false);
+    return null;
+  }
+  // 齐全就提交；最多追问一次，之后客人再回复就直接提交（缺的项写「未填」，由客服补问）
+  if (missing.length === 0 || asks >= 1 || (fields.phone && RE_WANT_CONTACT.test(simple))) {
     submit(openid, text, false);
     return passive(openid, `已收到您的门店申请：\n${summaryLines(fields).join('\n')}\n已转给客服同事，会尽快与您联系。信息有误的话直接回复更正即可。`, 'store_apply_done');
   }
   updateKefuConversation(openid, (c) => { if (c.storeApply) c.storeApply.asks += 1; });
-  const head = gotAny ? '收到，谢谢！还差：' : '麻烦补充以下信息（一条消息写完即可）：';
-  return passive(openid, `${head}\n${missing.map((k) => `· ${FIELD_LABELS[k]}`).join('\n')}`, 'store_apply_ask');
+  const gotAny = Object.keys(parsed).length > 0;
+  const got = FIELD_ORDER.filter((k) => fields[k]).map((k) => `${FIELD_LABELS[k].replace(/（.*$/, '')}：${fields[k]}`);
+  const head = gotAny ? '收到，谢谢！已记下：' : '麻烦补充以下信息（一条消息写完即可）：';
+  const tail = RE_WANT_CONTACT.test(simple) ? '\n补充后马上转给客服同事联系您。' : '';
+  return passive(openid, `${gotAny && got.length ? `${head}\n${got.map((g) => `· ${g}`).join('\n')}\n还差：` : gotAny ? '收到，谢谢！还差：' : head}\n${missing.map((k) => `· ${FIELD_LABELS[k]}`).join('\n')}${tail}`, 'store_apply_ask');
 }

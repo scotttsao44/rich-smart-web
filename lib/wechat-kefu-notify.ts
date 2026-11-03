@@ -48,11 +48,31 @@ export async function notifyKefuHandoff(conv: KefuConversation, reason: string, 
   const who = conv.memberName || `访客 ${conv.openid.slice(-6)}`;
   const time = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
   const summary = shortText(opts.detail || lastText || '(非文字消息)', 18);
-  const body = `【糙米量子客服】有客人需要人工处理\n客人：${who}\n原因：${reason}\n${opts.detail ? `线索：${opts.detail}\n` : ''}内容：${shortText(lastText || '(非文字消息)', 80)}\n时间：${time}\n处理：${link}`;
+  const directList = String(process.env.KEFU_NOTIFY_OPENIDS || '').split(',').map((s) => s.trim());
+  // 发起人本身就是通知接收人（自己测试）：照常发送，但标记为测试
+  const isTest = directList.includes(conv.openid) || (conv.memberId ? ids.includes(conv.memberId) : false);
+  const testTag = isTest ? '【测试】' : '';
+  const body = `${testTag}【糙米量子客服】有客人需要人工处理\n客人：${who}\n原因：${reason}\n${opts.detail ? `线索：${opts.detail}\n` : ''}内容：${shortText(lastText || '(非文字消息)', 80)}\n时间：${time}\n处理：${link}`;
   const templateId = process.env.WECHAT_KEFU_NOTIFY_TEMPLATE_ID || '';
   const templateKeys = String(process.env.WECHAT_KEFU_NOTIFY_TEMPLATE_KEYS || 'thing1,thing2,time3').split(',').map((s) => s.trim());
 
   const results: Array<{ memberId: number; channel: string; status: string; errcode?: string }> = [];
+  // 发送：先走首选渠道（有模板 ID 用模板消息，否则客服消息），失败时改用另一个可用渠道；每次结果都记录 errcode
+  const sendToRecipient = async (openid: string, memberId: number) => {
+    const out: typeof results = [];
+    const sendTemplateMsg = () => sendMpTemplate(openid, templateId, link, {
+      [templateKeys[0] || 'thing1']: shortText(`${testTag}${who}`, 18),
+      [templateKeys[1] || 'thing2']: summary,
+      [templateKeys[2] || 'time3']: time,
+    });
+    const order: Array<'template' | 'custom'> = templateId ? ['template', 'custom'] : ['custom'];
+    for (const channel of order) {
+      const r = channel === 'template' ? await sendTemplateMsg() : await sendMpCustomText(openid, body);
+      out.push({ memberId, channel, status: r.ok ? 'sent' : 'failed', errcode: r.ok ? '0' : String(r.errcode) });
+      if (r.ok) break;
+    }
+    return out;
+  };
   const directOpenids = String(process.env.KEFU_NOTIFY_OPENIDS || '')
     .split(',')
     .map((s) => s.trim())
@@ -60,16 +80,8 @@ export async function notifyKefuHandoff(conv: KefuConversation, reason: string, 
   for (const openid of directOpenids) {
     if (simulated) {
       results.push({ memberId: 0, channel: templateId ? 'template' : 'custom', status: 'simulated' });
-    } else if (templateId) {
-      const r = await sendMpTemplate(openid, templateId, link, {
-        [templateKeys[0] || 'thing1']: shortText(who, 18),
-        [templateKeys[1] || 'thing2']: summary,
-        [templateKeys[2] || 'time3']: time,
-      });
-      results.push({ memberId: 0, channel: 'template', status: r.ok ? 'sent' : 'failed', errcode: r.ok ? undefined : String(r.errcode) });
     } else {
-      const r = await sendMpCustomText(openid, body);
-      results.push({ memberId: 0, channel: 'custom', status: r.ok ? 'sent' : 'failed', errcode: r.ok ? undefined : String(r.errcode) });
+      results.push(...(await sendToRecipient(openid, 0)));
     }
   }
   for (const memberId of ids) {
@@ -82,16 +94,8 @@ export async function notifyKefuHandoff(conv: KefuConversation, reason: string, 
     if (openid) {
       if (simulated) {
         results.push({ memberId, channel: templateId ? 'template' : 'custom', status: 'simulated' });
-      } else if (templateId) {
-        const r = await sendMpTemplate(openid, templateId, link, {
-          [templateKeys[0] || 'thing1']: shortText(who, 18),
-          [templateKeys[1] || 'thing2']: summary,
-          [templateKeys[2] || 'time3']: time,
-        });
-        results.push({ memberId, channel: 'template', status: r.ok ? 'sent' : 'failed', errcode: r.ok ? undefined : String(r.errcode) });
       } else {
-        const r = await sendMpCustomText(openid, body);
-        results.push({ memberId, channel: 'custom', status: r.ok ? 'sent' : 'failed', errcode: r.ok ? undefined : String(r.errcode) });
+        results.push(...(await sendToRecipient(openid, memberId)));
       }
     } else {
       results.push({ memberId, channel: 'wechat', status: 'no_openid' });
@@ -119,5 +123,6 @@ export async function notifyKefuHandoff(conv: KefuConversation, reason: string, 
     }
   }
   if (!ids.length && !directOpenids.length) results.push({ memberId: 0, channel: 'config', status: 'no_recipients' });
-  return recordKefuNotification({ openid: conv.openid, reason, results });
+  console.info(`[wechat-kefu] notify ${isTest ? '(test) ' : ''}reason=${reason} conv=…${conv.openid.slice(-4)} results=${results.map((r) => `${r.memberId || 'openid'}:${r.channel}:${r.status}${r.errcode ? `:${r.errcode}` : ''}`).join(',')}`);
+  return recordKefuNotification({ openid: conv.openid, reason: `${testTag}${reason}`, results });
 }

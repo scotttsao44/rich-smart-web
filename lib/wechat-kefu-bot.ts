@@ -102,7 +102,7 @@ import {
 } from '@/lib/wechat-kefu-knowledge';
 import { isSimulatedOpenid, notifyKefuHandoff } from '@/lib/wechat-kefu-notify';
 import { sendMpCustomText } from '@/lib/wechat-mp-api';
-import { continueStoreApply, parseStoreApplyScene, startStoreApply } from '@/lib/wechat-kefu-store-apply';
+import { continueStoreApply, parseStoreApplyScene, startStoreApply, storeApplyHandoffDetail } from '@/lib/wechat-kefu-store-apply';
 
 // 服务号 AI 客服主流程：规则优先 → 症状只给权威科普链接 → 千问回答 → 不确定就转人工。
 
@@ -237,14 +237,16 @@ function passive(openid: string, text: string, tag: string) {
   return text;
 }
 
-function handoff(openid: string, reason: string, userText: string, pause: boolean) {
+// force：客人明确要人工／投诉时一定通知（不受 10 分钟节流影响）；门店申请期间附上已收集的申请信息
+function handoff(openid: string, reason: string, userText: string, pause: boolean, force = false) {
+  const detail = force ? storeApplyHandoffDetail(openid, KEFU_CITIES) : null;
   const conv = updateKefuConversation(openid, (c) => {
     c.status = 'pending';
     c.handoffReason = reason;
     c.pausedUntil = pause ? new Date(Date.now() + PAUSE_MS).toISOString() : null;
     if (!c.tags.includes('handoff')) c.tags.push('handoff');
   });
-  notifyKefuHandoff(conv, reason, userText).catch(() => console.warn('[wechat-kefu] notify error'));
+  notifyKefuHandoff(conv, reason, userText, { force, ...(detail ? { detail } : {}) }).catch(() => console.warn('[wechat-kefu] notify error'));
 }
 
 // 只按微信服务号 openid 精确匹配会员，绝不按客人报的订单号／手机号查别人的订单
@@ -540,7 +542,7 @@ async function handleText(openid: string, text: string, deadline: number): Promi
   // 合同年限是一般问题，AI 直接回答（不转人工）
   if (/(几年|多少年|年限|期限|多长时间|多久)/.test(simple) && /(合同|合作|签)/.test(simple) && !RE_HUMAN_ASK.test(simple) && !RE_COMPLAINT_TONE.test(simple) && !/(发票|开票|赔|扣)/.test(simple)) return passive(openid, KEFU_TERM_REPLY, 'contract');
   if (RE_HUMAN.test(simple)) {
-    handoff(openid, RE_DISPUTE.test(simple) ? '投诉纠纷／赔偿／合同发票／付款' : '客人要求人工', text, true);
+    handoff(openid, RE_DISPUTE.test(simple) ? '投诉纠纷／赔偿／合同发票／付款' : '客人要求人工', text, true, true);
     // 开发票：仍转人工开具，但先把开票规则告诉客人
     if (/(发票|开票)/.test(simple) && !RE_COMPLAINT_TONE.test(simple) && !RE_HUMAN_ASK.test(simple)) return passive(openid, KEFU_INVOICE_REPLY, 'handoff');
     return passive(openid, RE_COMPLAINT_TONE.test(simple) ? KEFU_COMPLAINT_REPLY : KEFU_HANDOFF_REPLY, 'handoff');

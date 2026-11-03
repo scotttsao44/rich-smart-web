@@ -13,6 +13,7 @@ import {
   Copy,
   Download,
   HeartPulse,
+  Home,
   Link as LinkIcon,
   MessageCircle,
   QrCode,
@@ -427,6 +428,15 @@ export default function ChinaMemberDashboardPage() {
             <Link href="/cn/orders" className="inline-flex items-center justify-center gap-2 rounded-xl border border-stone-300 bg-white px-4 py-3.5 text-base font-bold text-stone-800 md:rounded-lg md:py-2 md:text-sm">
               <ClipboardList className="h-4 w-4" />
               我的订单
+            </Link>
+            {/* 桌面版没有底部导航（ChinaMobileTabBar 仅手机显示），补回首页／商城入口；手机端不显示 */}
+            <Link href="/cn/home" className="hidden items-center justify-center gap-2 rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-bold text-stone-800 md:inline-flex">
+              <Home className="h-4 w-4" />
+              首页
+            </Link>
+            <Link href="/cn/shop" className="hidden items-center justify-center gap-2 rounded-lg border border-stone-300 bg-white px-4 py-2 text-sm font-bold text-stone-800 md:inline-flex">
+              <ShoppingBag className="h-4 w-4" />
+              商城
             </Link>
             {user.platformAdmin ? (
               <Link href="/cn/ops" className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg bg-stone-950 px-4 py-2 text-sm font-bold text-white">
