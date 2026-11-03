@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -27,6 +27,8 @@ const supportContact = {
   phone: '15862501498',
   wechatOfficialName: '糙米量子',
   wechatQr: '/wechat-official-qr.jpg',
+  // 简体页：服务号带参二维码（扫码关注/已关注扫码后自动发门店申请问题模板）
+  storeApplyQrApi: '/api/cn/wechat/store-apply-qr',
 };
 
 const copy = {
@@ -121,6 +123,8 @@ function LocalizedLoop({ locale }: { locale: Locale }) {
 export default function StoreApplicationGuidePage({ locale }: { locale: Locale }) {
   const [contactOpen, setContactOpen] = useState(false);
   const [qrFailed, setQrFailed] = useState(false);
+  const [qrSrc, setQrSrc] = useState(supportContact.storeApplyQrApi);
+  const [follower, setFollower] = useState<'unknown' | 'yes' | 'sending' | 'sent' | 'failed'>('unknown');
   const [videoState, setVideoState] = useState<'loading' | 'ready' | 'error'>('loading');
   const text = copy[locale];
   const isTraditional = locale === 'zh-TW';
@@ -130,6 +134,35 @@ export default function StoreApplicationGuidePage({ locale }: { locale: Locale }
   const hasWechat = Boolean(supportContact.wechatOfficialName?.trim());
   const hasPhone = Boolean(supportContact.phone?.trim());
   const contactMissing = isTraditional ? '尚待核對，尚未提供聯絡資料。' : '尚待核对，尚未提供联系资料。';
+
+  useEffect(() => {
+    if (!contactOpen || isTraditional) return;
+    const ref = new URLSearchParams(window.location.search).get('ref') || '';
+    setQrSrc(`${supportContact.storeApplyQrApi}${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`);
+    if (!/MicroMessenger/i.test(navigator.userAgent) || follower !== 'unknown') return;
+    let cancelled = false;
+    fetch(`${supportContact.storeApplyQrApi}?status=1`, { cache: 'no-store', credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (!cancelled && data?.follower === true) setFollower('yes'); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [contactOpen, isTraditional, follower]);
+
+  async function sendApplyTemplate() {
+    setFollower('sending');
+    try {
+      const res = await fetch(supportContact.storeApplyQrApi, { method: 'POST', credentials: 'same-origin' });
+      const data = await res.json().catch(() => null);
+      setFollower(data?.sent ? 'sent' : 'failed');
+    } catch {
+      setFollower('failed');
+    }
+  }
+
+  function backToWechat() {
+    const bridge = (window as unknown as { WeixinJSBridge?: { invoke: (name: string, args: object, cb?: () => void) => void } }).WeixinJSBridge;
+    if (bridge) bridge.invoke('closeWindow', {});
+  }
 
   return (
     <main className="min-h-screen bg-stone-50 text-stone-950">
@@ -243,7 +276,26 @@ export default function StoreApplicationGuidePage({ locale }: { locale: Locale }
               </button>
             </div>
             <div className="mt-5 grid gap-4">
-              {hasWechat && supportContact.wechatQr?.trim() && !qrFailed ? <img src={supportContact.wechatQr} alt={`${supportContact.wechatOfficialName} QR`} onError={() => setQrFailed(true)} className="mx-auto aspect-square w-56 max-w-full rounded-lg border border-stone-200 object-contain p-2" /> : <p role="status" className="text-sm font-semibold text-stone-600">{isTraditional ? '公眾號 QR 暫未提供或無法載入。' : '公众号 QR 暂未提供或无法载入。'}</p>}
+              {!isTraditional && hasWechat && (follower === 'yes' || follower === 'sending' || follower === 'sent') ? (
+                <div className="rounded-lg border border-teal-200 bg-teal-50 p-4 text-center">
+                  {follower === 'sent' ? (
+                    <>
+                      <p role="status" className="text-sm font-bold leading-6 text-teal-900">已发到「{supportContact.wechatOfficialName}」服务号，请回到微信对话列表打开「{supportContact.wechatOfficialName}」，按提示一条消息回复即可。</p>
+                      <button type="button" onClick={backToWechat} className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-teal-700 px-4 py-2 font-black text-white"><MessageCircle className="h-5 w-5" />返回微信</button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm font-bold leading-6 text-teal-900">您已关注「{supportContact.wechatOfficialName}」，点下面按钮，服务号会直接发来门店申请问题。</p>
+                      <button type="button" disabled={follower === 'sending'} onClick={sendApplyTemplate} className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-teal-700 px-4 py-2 font-black text-white disabled:opacity-60"><MessageCircle className="h-5 w-5" />{follower === 'sending' ? '发送中…' : '到服务号填写门店申请'}</button>
+                    </>
+                  )}
+                </div>
+              ) : !isTraditional && hasWechat && qrSrc && !qrFailed ? (
+                <div className="text-center">
+                  <img src={qrSrc} alt={`${supportContact.wechatOfficialName} 门店申请二维码`} onError={() => setQrFailed(true)} className="mx-auto aspect-square w-56 max-w-full rounded-lg border border-stone-200 object-contain p-2" />
+                  <p className="mt-2 text-xs font-bold leading-5 text-stone-600">{follower === 'failed' ? '没能直接发送，请长按识别二维码进入服务号。' : '长按识别二维码，关注后服务号会自动发来门店申请问题。'}</p>
+                </div>
+              ) : hasWechat && supportContact.wechatQr?.trim() && !qrFailed && isTraditional ? <img src={supportContact.wechatQr} alt={`${supportContact.wechatOfficialName} QR`} onError={() => setQrFailed(true)} className="mx-auto aspect-square w-56 max-w-full rounded-lg border border-stone-200 object-contain p-2" /> : <p role="status" className="text-sm font-semibold text-stone-600">{isTraditional ? '公眾號 QR 暫未提供或無法載入。' : '公众号 QR 暂未提供或无法载入。'}</p>}
               <div className="rounded-lg bg-stone-50 p-4 text-sm font-bold leading-7 text-stone-700">
                 <div>{text.wechat}：<span className="text-stone-950">{hasWechat ? supportContact.wechatOfficialName : contactMissing}</span></div>
                 <div>{text.phone}：{hasPhone ? <a href={`tel:${supportContact.phone}`} className="text-teal-700">{supportContact.phone}</a> : <span>{contactMissing}</span>}</div>

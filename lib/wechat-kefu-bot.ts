@@ -102,6 +102,7 @@ import {
 } from '@/lib/wechat-kefu-knowledge';
 import { isSimulatedOpenid, notifyKefuHandoff } from '@/lib/wechat-kefu-notify';
 import { sendMpCustomText } from '@/lib/wechat-mp-api';
+import { continueStoreApply, parseStoreApplyScene, startStoreApply } from '@/lib/wechat-kefu-store-apply';
 
 // 服务号 AI 客服主流程：规则优先 → 症状只给权威科普链接 → 千问回答 → 不确定就转人工。
 
@@ -497,6 +498,10 @@ async function handleText(openid: string, text: string, deadline: number): Promi
     return null;
   }
 
+  // 门店申请页扫码后的申请收集：解析字段、只追问缺的项，收齐后记录并通知客服
+  const storeApplyReply = continueStoreApply(openid, text, { cities: KEFU_CITIES, human: RE_HUMAN.test(simple) });
+  if (storeApplyReply !== null) return storeApplyReply;
+
   // 客人确认沿用之前留过的手机号（上一条 AI 回复是「还是用尾号 xxxx 联系您吗？」）
   const lastAi = conv ? [...conv.messages].reverse().find((m) => m.role === 'ai') : undefined;
   const prevTag = lastAi?.tag || '';
@@ -780,7 +785,16 @@ async function processMessage(msg: Record<string, string>, deadline: number): Pr
         if (msg.EventKey) c.source = String(msg.EventKey).replace(/^qrscene_/, '').slice(0, 64);
       });
       appendKefuMessage(openid, { role: 'system', type: 'event', text: `关注${msg.EventKey ? `（来源：${String(msg.EventKey).replace(/^qrscene_/, '')}）` : ''}` });
+      // 门店申请页的带参二维码：不发通用欢迎语，直接发门店申请问题模板（客服消息）
+      if (parseStoreApplyScene(msg.EventKey)) return startStoreApply(openid, String(msg.EventKey), 'subscribe', deadline);
       return passive(openid, KEFU_WELCOME, 'welcome');
+    }
+    if (event === 'scan' && parseStoreApplyScene(msg.EventKey)) {
+      updateKefuConversation(openid, (c) => {
+        linkMember(c);
+        c.subscribed = true;
+      });
+      return startStoreApply(openid, String(msg.EventKey), 'scan', deadline);
     }
     if (event === 'unsubscribe') {
       if (getKefuConversation(openid)) {

@@ -48,6 +48,19 @@ export type KefuConversation = {
   lastNotifiedAt?: string | null;
   aiCalls: string[];
   messages: KefuMessage[];
+  storeApply?: KefuStoreApply | null;
+};
+
+// 门店申请页带参二维码扫码后的申请收集（见 lib/wechat-kefu-store-apply.ts）
+export type KefuStoreApply = {
+  status: 'collecting' | 'submitted';
+  scene: string;
+  via: 'subscribe' | 'scan' | 'web_button';
+  referrerId: number | null;
+  startedAt: string;
+  submittedAt?: string;
+  asks: number;
+  fields: { city?: string; store?: string; area?: string; contact?: string; phone?: string; mode?: string };
 };
 
 export type KefuNotification = {

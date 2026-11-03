@@ -283,6 +283,14 @@ export function readPendingReferralAttribution(request: NextRequest, fallbackRef
   return resolveReferralAttributionFromCode(queryRef || null, request.nextUrl?.pathname || '/cn/login');
 }
 
+// 只读：从推荐归属 cookie 取出仍有效的推荐人会员 ID（不写入访问记录、不建连结）
+export function peekPendingReferrerMemberId(request: NextRequest): number | null {
+  const pending = decodeCookie(request.cookies.get(REFERRAL_ATTRIBUTION_COOKIE)?.value);
+  if (!pending?.linkId || !pending.referrerMemberId) return null;
+  const resolved = activeLink(readState(), pending.linkId);
+  return resolved && resolved.owner.id === pending.referrerMemberId ? pending.referrerMemberId : null;
+}
+
 export function setPendingReferralAttributionCookie(response: NextResponse, pending: PendingReferralAttribution, secure: boolean) {
   response.cookies.set(REFERRAL_ATTRIBUTION_COOKIE, encodeCookie(pending), {
     httpOnly: true,
