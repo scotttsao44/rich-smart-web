@@ -15,12 +15,19 @@ export const STORE_PREPAY_VALID_MONTHS = 3;
 export type StorePrepayTier = { id: string; amountYuan: number; uses: number; testOnly?: boolean };
 /** 正式档位（客服文案同源）；金额只在登录后付款步骤显示。 */
 export const STORE_PREPAY_TIERS: StorePrepayTier[] = KEFU_TIERS.map((t) => ({ id: t.id, amountYuan: t.amountYuan, uses: t.uses }));
-/** 仅供自测小额付款（不进客服正式档、不对外宣传）。测完可人工退。 */
+/** 仅供自测小额付款（不进客服正式档、不对外宣传）。测完可人工退。资料结构与已付 T 单保留；默认不对任何人展示或下单。 */
 export const STORE_PREPAY_TEST_TIER: StorePrepayTier = { id: 'T', amountYuan: 5, uses: 1, testOnly: true };
-/** 默认可见测试档的会员（曹总自测）；也可用 env STORE_PREPAY_TEST_MEMBER_IDS=逗号分隔覆盖/追加。 */
+/** 测试档允许名单；仅当 STORE_PREPAY_TEST=1 时生效。可用 env STORE_PREPAY_TEST_MEMBER_IDS=逗号分隔覆盖，缺省为曹总会员号。 */
 const DEFAULT_TEST_MEMBER_IDS = [513117808227];
 
+/** 测试档总开关：默认关闭。仅 env STORE_PREPAY_TEST=1（或 true/yes/on）时，允许名单／管理员可见并可下单 T。 */
+export function storePrepayTestEnabled() {
+  const v = String(process.env.STORE_PREPAY_TEST || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
 export function storePrepayTestAllowed(userId: number, isAdmin = false) {
+  if (!storePrepayTestEnabled()) return false;
   if (isAdmin) return true;
   const fromEnv = String(process.env.STORE_PREPAY_TEST_MEMBER_IDS || '')
     .split(',')
