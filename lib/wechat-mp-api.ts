@@ -116,3 +116,32 @@ export async function getMpUserSubscribed(openid: string): Promise<boolean | nul
   }
   return null;
 }
+
+// 临时素材（图片，3 天有效）：用于客服图片消息，例如企业微信「联系我」二维码
+export async function uploadMpTempImage(image: Buffer, filename = 'image.jpg'): Promise<{ ok: boolean; mediaId?: string; errcode?: number | string }> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const token = await getMpStableToken();
+    if (!token) return { ok: false, errcode: 'no_token' };
+    try {
+      const form = new FormData();
+      form.append('media', new Blob([new Uint8Array(image)], { type: filename.endsWith('.png') ? 'image/png' : 'image/jpeg' }), filename);
+      const res = await fetch(`https://api.weixin.qq.com/cgi-bin/media/upload?access_token=${encodeURIComponent(token)}&type=image`, {
+        method: 'POST',
+        body: form,
+        cache: 'no-store',
+        signal: AbortSignal.timeout(15000),
+      });
+      const data = await res.json().catch(() => ({}));
+      const errcode = Number(data.errcode || 0);
+      if (errcode === 0 && data.media_id) return { ok: true, mediaId: String(data.media_id) };
+      if ((errcode === 40001 || errcode === 42001) && attempt === 0) {
+        stableCache = null;
+        continue;
+      }
+      return { ok: false, errcode: errcode || 'no_media_id' };
+    } catch {
+      return { ok: false, errcode: 'network' };
+    }
+  }
+  return { ok: false, errcode: 'retry_exhausted' };
+}

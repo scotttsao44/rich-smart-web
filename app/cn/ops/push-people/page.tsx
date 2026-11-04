@@ -13,6 +13,10 @@ type Data = {
   recent: Notice[];
   runs: Array<{ at: string; task: string; dryRun: boolean; summary: Record<string, number> }>;
 };
+type WecomRow = { memberId: number; name: string; role: string; bound: boolean; window: Win; wecomAdded: boolean; wecomAddedAt: string | null; lastInvite: { at: string; status: string } | null; inviteQr: string | null };
+type Wecom = { configured: boolean; callbackConfigured: boolean; count: number; cap: number; unmatched: number; defaultQr: { qrCode: string; createdAt: string } | null; syncedAt: string | null; inviteText: string; rows: WecomRow[] };
+type InviteResult = { memberId: number; name: string; status: string; label: string; qrCode?: string };
+const INVITE_STATUS: Record<string, string> = { sent: '已发送', unreachable: '无法触达', failed: '失败', simulated: '模拟', already_added: '已加', cap_reached: '已达上限' };
 
 const STATUS: Record<string, string> = { sent: '已送达', failed: '发送失败', simulated: '模拟', no_openid: '未绑定', not_enabled: '未开启', member_not_found: '会员不存在', pending: '发送中' };
 const EVENT: Record<string, string> = { lead: '线索', appointment: '预约', test: '测试' };
@@ -31,7 +35,12 @@ export default function PushPeoplePage() {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [plan, setPlan] = useState<{ summary: Record<string, number>; plan: Array<{ memberId: number; name: string; tierLabel: string; action: string; reason: string }> } | null>(null);
+  const [wecom, setWecom] = useState<Wecom | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [inviting, setInviting] = useState(false);
+  const [inviteResults, setInviteResults] = useState<InviteResult[] | null>(null);
+  const [copied, setCopied] = useState('');
+  const [plan, setPlan] = useState<{ summary: Record<string, number>; plan: Array<{ memberId: number; name: string; tierLabel: string; action: string; reason: string; channel?: string }> } | null>(null);
 
   const load = useCallback(async () => {
     const response = await fetch('/api/cn/ops/push-people', { cache: 'no-store' });
@@ -42,7 +51,48 @@ export default function PushPeoplePage() {
     setDrafts(Object.fromEntries((body.points || []).map((p: Data['points'][number]) => [p.id, p.ownerMemberIds.join(',')])));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const loadWecom = useCallback(async () => {
+    const response = await fetch('/api/cn/ops/wecom', { cache: 'no-store' });
+    const body = await response.json().catch(() => ({}));
+    if (response.ok) setWecom(body);
+  }, []);
+
+  useEffect(() => { load(); loadWecom(); }, [load, loadWecom]);
+
+  const wecomOf = (memberId: number) => wecom?.rows.find((r) => r.memberId === memberId) || null;
+  const toggle = (memberId: number) => setSelected((prev) => { const next = new Set(prev); if (next.has(memberId)) next.delete(memberId); else next.add(memberId); return next; });
+
+  const wecomAction = async (action: 'sync' | 'default-qr') => {
+    const response = await fetch('/api/cn/ops/wecom', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) setError(body.error || '操作失败');
+    else if (body.overview) setWecom(body.overview);
+  };
+
+  const invite = async () => {
+    const ids = Array.from(selected).filter((id) => !wecomOf(id)?.wecomAdded);
+    if (!ids.length) { setError('请勾选尚未添加企业微信的会员'); return; }
+    if (!window.confirm(`将向 ${ids.length} 位会员发送企业微信邀请（48 小时内互动过的会收到服务号消息），确认发送？`)) return;
+    setInviting(true);
+    try {
+      const response = await fetch('/api/cn/ops/wecom', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'invite', memberIds: ids }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) setError(body.error || '邀请失败');
+      else { setError(''); setInviteResults(body.results || []); if (body.overview) setWecom(body.overview); setSelected(new Set()); }
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const copy = async (key: string, value: string) => {
+    try { await navigator.clipboard.writeText(value); setCopied(key); } catch { window.prompt('复制以下内容', value); }
+  };
+
+  const wecomCell = (memberId: number) => {
+    const w = wecomOf(memberId);
+    if (!w) return <span className="text-stone-400">—</span>;
+    return w.wecomAdded ? <span className="font-bold text-teal-700">已加</span> : <span className="text-stone-500">未加{w.lastInvite ? `（${INVITE_STATUS[w.lastInvite.status] || w.lastInvite.status} ${t(w.lastInvite.at)}）` : ''}</span>;
+  };
 
   const savePoint = async (pointId: string) => {
     const ids = String(drafts[pointId] || '').split(/[,，\s]+/).map(Number).filter((n) => n > 0);
@@ -74,21 +124,90 @@ export default function PushPeoplePage() {
         <section className="mt-6 overflow-x-auto rounded-lg border border-stone-200 bg-white" data-testid="push-owners">
           <h2 className="border-b border-stone-100 px-4 py-3 font-black">店主／体验点负责人（{data?.owners.length ?? 0}）</h2>
           <table className="w-full min-w-[860px] text-left text-sm">
-            <thead className="bg-stone-50 text-xs text-stone-500"><tr><th className="px-4 py-2">会员</th><th className="px-4 py-2">负责</th><th className="px-4 py-2">通知</th><th className="px-4 py-2">服务号</th><th className="px-4 py-2">48 小时窗口</th><th className="px-4 py-2">最近通知</th></tr></thead>
+            <thead className="bg-stone-50 text-xs text-stone-500"><tr><th className="px-2 py-2"><span className="sr-only">选择</span></th><th className="px-4 py-2">会员</th><th className="px-4 py-2">负责</th><th className="px-4 py-2">通知</th><th className="px-4 py-2">服务号</th><th className="px-4 py-2">48 小时窗口</th><th className="px-4 py-2">企业微信</th><th className="px-4 py-2">最近通知</th></tr></thead>
             <tbody>
               {(data?.owners || []).map((o) => (
                 <tr key={o.memberId} className="border-t border-stone-100">
+                  <td className="px-2 py-2"><input type="checkbox" aria-label={`选择 ${o.name}`} checked={selected.has(o.memberId)} disabled={Boolean(wecomOf(o.memberId)?.wecomAdded)} onChange={() => toggle(o.memberId)} /></td>
                   <td className="px-4 py-2 font-bold">{o.name}<div className="text-xs text-stone-400">ID {o.memberId}</div></td>
                   <td className="px-4 py-2">{o.targets.map((x) => `${x.label}（${x.city || '城市待补'}·${x.source}）`).join('、') || '—'}</td>
                   <td className="px-4 py-2">{o.enabled ? <span className="font-bold text-teal-700">已开启</span> : <span className="text-stone-500">未开启</span>}</td>
                   <td className="px-4 py-2">{o.bound ? '已绑定' : <span className="font-bold text-amber-700">未绑定</span>}</td>
                   <td className="px-4 py-2">{o.window.open ? <span className="text-teal-700">{o.window.label}</span> : <span className="text-stone-500">{o.window.label}</span>}</td>
+                  <td className="px-4 py-2">{wecomCell(o.memberId)}</td>
                   <td className="px-4 py-2 text-xs">{noticeText(o.lastNotice)}</td>
                 </tr>
               ))}
-              {data && !data.owners.length ? <tr><td colSpan={6} className="px-4 py-4 text-stone-500">暂无店主。可在下方为体验点指定负责人会员 ID，或等门店申请开通后自动列入。</td></tr> : null}
+              {data && !data.owners.length ? <tr><td colSpan={8} className="px-4 py-4 text-stone-500">暂无店主。可在下方为体验点指定负责人会员 ID，或等门店申请开通后自动列入。</td></tr> : null}
             </tbody>
           </table>
+        </section>
+
+        <section className="mt-6 rounded-lg border border-stone-200 bg-white" data-testid="wecom-section">
+          <div className="flex flex-wrap items-start justify-between gap-4 border-b border-stone-100 px-4 py-3">
+            <div>
+              <h2 className="font-black">企业微信客户联系</h2>
+              <p className="mt-1 text-sm font-semibold text-stone-500">
+                已加客户 <span data-testid="wecom-count" className={wecom && wecom.count >= wecom.cap ? 'text-red-700' : 'text-teal-800'}>{wecom ? `${wecom.count}/${wecom.cap}` : '—'}</span>（企业未认证上限 {wecom?.cap ?? 100} 人）{wecom?.unmatched ? ` · 未对应会员 ${wecom.unmatched}` : ''} · 回调{wecom?.callbackConfigured ? '已配置' : '未配置'} · 最近同步 {t(wecom?.syncedAt)}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => wecomAction('sync')} className="rounded-lg border border-stone-300 px-3 py-2 text-sm font-bold">同步客户数</button>
+              <button type="button" onClick={invite} disabled={inviting || !selected.size} data-testid="wecom-invite" className="rounded-lg bg-teal-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-40">{inviting ? '发送中…' : `邀请加企业微信${selected.size ? `（${selected.size}）` : ''}`}</button>
+            </div>
+          </div>
+          <div className="grid gap-4 p-4 md:grid-cols-[200px_1fr]">
+            <div className="text-center">
+              {wecom?.defaultQr ? (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/api/cn/ops/wecom/qr?inline=1" alt="企业微信默认二维码" className="mx-auto h-44 w-44 rounded border border-stone-200 object-contain" />
+                  <div className="mt-1 text-xs text-stone-500">默认「联系我」二维码</div>
+                  <a href="/api/cn/ops/wecom/qr" className="mt-2 inline-block rounded-lg border border-teal-600 px-3 py-1.5 text-xs font-bold text-teal-800">下载二维码</a>
+                </>
+              ) : (
+                <button type="button" onClick={() => wecomAction('default-qr')} className="mt-8 rounded-lg border border-teal-600 px-3 py-2 text-sm font-bold text-teal-800">生成默认二维码</button>
+              )}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-left text-sm" data-testid="wecom-rows">
+                <thead className="bg-stone-50 text-xs text-stone-500"><tr><th className="px-2 py-2"><span className="sr-only">选择</span></th><th className="px-3 py-2">会员</th><th className="px-3 py-2">分层</th><th className="px-3 py-2">48 小时窗口</th><th className="px-3 py-2">企业微信</th></tr></thead>
+                <tbody>
+                  {(wecom?.rows || []).map((r) => (
+                    <tr key={r.memberId} className="border-t border-stone-100">
+                      <td className="px-2 py-2"><input type="checkbox" aria-label={`选择 ${r.name}`} checked={selected.has(r.memberId)} disabled={r.wecomAdded} onChange={() => toggle(r.memberId)} /></td>
+                      <td className="px-3 py-2 font-bold">{r.name}<div className="text-xs text-stone-400">ID {r.memberId}</div></td>
+                      <td className="px-3 py-2">{r.role}</td>
+                      <td className="px-3 py-2">{r.window.open ? <span className="text-teal-700">{r.window.label}</span> : <span className="text-stone-500">{r.window.label}</span>}</td>
+                      <td className="px-3 py-2">{wecomCell(r.memberId)}</td>
+                    </tr>
+                  ))}
+                  {wecom && !wecom.rows.length ? <tr><td colSpan={5} className="px-3 py-4 text-stone-500">暂无已绑定服务号的会员</td></tr> : null}
+                </tbody>
+              </table>
+              <p className="mt-2 text-xs text-stone-500">勾选后点「邀请加企业微信」：48 小时内与服务号互动过的会员会收到文字＋专属二维码（扫码添加后自动对应会员）；其余标记「无法触达（超过48小时）」，可复制邀请内容或下载二维码手动转发。</p>
+            </div>
+          </div>
+          {inviteResults ? (
+            <div className="border-t border-stone-100 p-4 text-sm" data-testid="wecom-invite-results">
+              <div className="font-black">邀请结果</div>
+              <ul className="mt-2 grid gap-2">
+                {inviteResults.map((r) => (
+                  <li key={r.memberId} className="flex flex-wrap items-center gap-2">
+                    <span className="font-bold">{r.name}（{r.memberId}）</span>
+                    <span className={r.status === 'sent' ? 'text-teal-700' : r.status === 'unreachable' ? 'text-amber-700' : 'text-stone-600'}>{r.label}</span>
+                    {r.qrCode && r.status !== 'sent' ? (
+                      <>
+                        <button type="button" onClick={() => copy(`t${r.memberId}`, `${wecom?.inviteText || ''}\n二维码：${r.qrCode}`)} className="rounded border border-stone-300 px-2 py-0.5 text-xs font-bold">{copied === `t${r.memberId}` ? '已复制' : '复制邀请内容'}</button>
+                        <button type="button" onClick={() => copy(`l${r.memberId}`, r.qrCode || '')} className="rounded border border-stone-300 px-2 py-0.5 text-xs font-bold">{copied === `l${r.memberId}` ? '已复制' : '复制二维码链接'}</button>
+                        <a href={`/api/cn/ops/wecom/qr?memberId=${r.memberId}`} className="rounded border border-stone-300 px-2 py-0.5 text-xs font-bold">下载二维码</a>
+                      </>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </section>
 
         <section className="mt-6 overflow-x-auto rounded-lg border border-stone-200 bg-white">

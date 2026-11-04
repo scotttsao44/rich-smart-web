@@ -4,6 +4,8 @@ import { confirmedRecentIncome, listMemberTiersForPush, readWakeupAssets } from 
 import { adminNotifyOpenids, escalateUnconfirmed, isSimulatedOpenid, lastInteractionAt, listOptedInOwners, ownerNoticesSince, windowStatus } from './local-cn-store-owners';
 import { findLocalCnUserById, getFrozenReferrerCode, listLocalCnUsers, normalizeCnReferrerCode, type LocalCnUser } from './local-cn-users';
 import { sendMpCustomArticle, sendMpCustomImage, sendMpCustomText } from './wechat-mp-api';
+import { wecomContactForMember } from './local-cn-wecom';
+import { addMsgTemplate } from './wecom-api';
 
 // 分层唤醒排程（由例行任务每天调用 POST /api/cn/push-jobs?task=daily）
 // 渠道：只用服务号客服消息（48 小时互动窗口内）；不用群发。窗口外一律跳过并记录原因。
@@ -15,6 +17,7 @@ import { sendMpCustomArticle, sendMpCustomImage, sendMpCustomText } from './wech
 //   人工一键唤醒 2 天内发过的不再排程；回复「退订」的不再排程
 // 真实发送需同时满足：dryRun=false 且环境变量 PUSH_WAKE_LIVE=1；否则只生成计划（dry-run）。
 // testOpenid（必须在 KEFU_NOTIFY_OPENIDS 内）：只给这一个 openid 真发一份【测试】样本。
+// 已加企业微信的会员：改走企业微信群发助手（add_msg_template，成员需在手机确认；每位客户每天最多 1 条），不受 48 小时窗口限制。
 
 type Tier = 'owner' | 'active' | 'cooling' | 'pending_start' | 'sleeping';
 const RULES: Record<Exclude<Tier, 'owner'>, { intervalDays: number; maxStreak?: number; label: string }> = {
@@ -137,6 +140,16 @@ async function sendRich(openid: string, text: string, withMedia: boolean) {
   return { channel, status: 'sent' as const, errcode: '0' };
 }
 
+// 企业微信群发助手：创建任务即记为 sent（成员手机确认后才真正发出）
+async function sendWecom(memberId: number, text: string) {
+  const contact = wecomContactForMember(memberId);
+  if (!contact) return { channel: 'wecom_template', status: 'failed' as const, errcode: 'not_added' };
+  const r = await addMsgTemplate({ sender: contact.sender, externalUserIds: [contact.externalUserId], text });
+  if (!r.ok) return { channel: 'wecom_template', status: 'failed' as const, errcode: String(r.errcode) };
+  if (r.failList.includes(contact.externalUserId)) return { channel: 'wecom_template', status: 'failed' as const, errcode: 'fail_list' };
+  return { channel: 'wecom_template', status: 'sent' as const, errcode: '0' };
+}
+
 type PlanRow = {
   memberId: number;
   name: string;
@@ -147,6 +160,7 @@ type PlanRow = {
   window: string;
   lastSentAt: string | null;
   preview?: string;
+  channel: 'mp_kefu' | 'wecom';
 };
 
 export function buildPushPlan() {
@@ -162,16 +176,18 @@ export function buildPushPlan() {
     const user = owner.user as LocalCnUser;
     ownerIds.add(user.id);
     const w = windowStatus(String(user.wechatOfficialOpenId));
+    const wecom = wecomContactForMember(user.id);
     const last = lastSend(user.id, 'owner');
     const sentToday = last && Date.parse(last) >= shanghaiDayStart(now);
-    const action = !w.open ? 'skip' : sentToday ? 'skip' : 'send';
-    rows.push({ memberId: user.id, name: user.name, tier: 'owner', tierLabel: '店主', action, reason: !w.open ? `客服消息窗口：${w.label}` : sentToday ? '今天已发过简报' : '每日简报', window: w.label, lastSentAt: last, preview: action === 'send' ? ownerDigestText(user) : undefined });
+    const action = !w.open && !wecom ? 'skip' : sentToday ? 'skip' : 'send';
+    rows.push({ memberId: user.id, name: user.name, tier: 'owner', tierLabel: '店主', action, reason: !w.open && !wecom ? `客服消息窗口：${w.label}` : sentToday ? '今天已发过简报' : wecom ? '每日简报（企业微信群发助手）' : '每日简报', window: w.label, lastSentAt: last, preview: action === 'send' ? ownerDigestText(user) : undefined, channel: wecom ? 'wecom' : 'mp_kefu' });
   }
   for (const row of listMemberTiersForPush(lastInteractionAt)) {
     if (ownerIds.has(row.member.id) || admins.has(row.openid)) continue;
     const tier = (row.tier in RULES ? row.tier : 'sleeping') as Exclude<Tier, 'owner'>;
     const rule = RULES[tier];
     const w = windowStatus(row.openid);
+    const wecom = wecomContactForMember(row.member.id);
     const last = lastSend(row.member.id);
     const streak = state.streaks[String(row.member.id)];
     let reason = '';
@@ -179,8 +195,8 @@ export function buildPushPlan() {
     else if (row.lastReminderAt && now - Date.parse(row.lastReminderAt) < MANUAL_COOLDOWN_MS) reason = '2 天内已有人工唤醒';
     else if (last && now - Date.parse(last) < rule.intervalDays * 86400000) reason = `冷却中（每 ${rule.intervalDays} 天最多 1 次）`;
     else if (rule.maxStreak && streak?.tier === tier && streak.count >= rule.maxStreak) reason = `沉睡已连续 ${rule.maxStreak} 次，停止推送`;
-    else if (!w.open) reason = `客服消息窗口：${w.label}`;
-    rows.push({ memberId: row.member.id, name: row.member.name, tier, tierLabel: rule.label, action: reason ? 'skip' : 'send', reason: reason || `${rule.label}：每 ${rule.intervalDays} 天 1 次`, window: w.label, lastSentAt: last, preview: reason ? undefined : wakeText(row.member, tier) });
+    else if (!w.open && !wecom) reason = `客服消息窗口：${w.label}`;
+    rows.push({ memberId: row.member.id, name: row.member.name, tier, tierLabel: rule.label, action: reason ? 'skip' : 'send', reason: reason || `${rule.label}：每 ${rule.intervalDays} 天 1 次${wecom ? '（企业微信群发助手）' : ''}`, window: w.label, lastSentAt: last, preview: reason ? undefined : wakeText(row.member, tier), channel: wecom ? 'wecom' : 'mp_kefu' });
   }
   return rows;
 }
@@ -222,9 +238,9 @@ export async function runPushSchedule(opts: { task?: string; dryRun?: boolean; t
     for (const row of rows.filter((r) => r.action === 'send').slice(0, BATCH_LIMIT)) {
       const user = findLocalCnUserById(row.memberId);
       const openid = String(user?.wechatOfficialOpenId || '');
-      if (!user || !openid) continue;
+      if (!user || (!openid && row.channel !== 'wecom')) continue;
       const text = row.tier === 'owner' ? ownerDigestText(user) : wakeText(user, row.tier as Exclude<Tier, 'owner'>);
-      const r = await sendRich(openid, text, true);
+      const r = row.channel === 'wecom' ? await sendWecom(row.memberId, text) : await sendRich(openid, text, true);
       sent.push({ memberId: row.memberId, tier: row.tier, status: r.status, channel: r.channel, errcode: r.errcode });
       const state = readState();
       state.sends.push({ memberId: row.memberId, at: new Date().toISOString(), tier: row.tier, status: r.status, channel: r.channel, errcode: r.errcode });
