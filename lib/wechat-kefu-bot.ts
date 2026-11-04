@@ -1,4 +1,6 @@
 import { bindFollowSource, parseFollowRefScene } from './local-cn-follow-qr';
+import { agentInfoStep, agentSummary, ownerInfoImage, ownerInfoStep, ownerSummary, startAgentInfo, startOwnerInfo, STORE_PROFILE_URL, type InfoResult } from './wechat-kefu-store-profile';
+import { kefuNearestReply, kefuPointsLine, kefuPointsReply } from './wechat-kefu-points';
 import { listLocalCnOrders } from '@/lib/local-cn-orders';
 import { listLocalCnUsers, setLocalCnUserSelfIdentity } from '@/lib/local-cn-users';
 import {
@@ -303,6 +305,17 @@ function notifyAdmins(openid: string, reason: string, text: string, detail: stri
   if (fresh) notifyKefuHandoff(fresh, reason, text, { force: true, detail }).catch(() => console.warn('[wechat-kefu] menu notify error'));
 }
 
+// 资料收集的回复；提交时通知 KEFU_NOTIFY_OPENIDS（曹总）
+function infoReply(openid: string, r: InfoResult, text: string) {
+  if (r.done && r.profile) {
+    const owner = r.profile.kind === 'owner';
+    const detail = owner ? ownerSummary(r.profile) : agentSummary(r.profile);
+    appendKefuMessage(openid, { role: 'system', type: 'lead_notify', tag: owner ? 'owner_profile' : 'agent_profile', text: `${owner ? '店主' : '代理'}自报资料已提交（待后台确认）：${detail}` });
+    notifyAdmins(openid, `${owner ? '店主' : '代理'}提交门店资料（自报，待后台确认）`, text, `${detail}${r.profile.flags.length ? `；需核对：${r.profile.flags.join('／')}` : ''}`);
+  }
+  return passive(openid, r.reply, r.done ? (r.profile?.kind === 'agent' ? 'agent_info_done' : 'owner_info_done') : (r.profile?.kind === 'agent' ? 'agent_info' : 'owner_info'));
+}
+
 function menuFlow(openid: string, text: string, simple: string, trigger: boolean) {
   const st = slotState(openid, simple);
   const head = (t: string) => (trigger ? t : '好的，');
@@ -321,7 +334,8 @@ function menuFlow(openid: string, text: string, simple: string, trigger: boolean
   }
   if (st.kind === 'stores') {
     saveIdentity(openid, 'stores', '');
-    return passive(openid, `${kefuStoresLine()}\n想预约到店体验请回复 1。`, 'visit');
+    // 列出该城市（已知时）有地址的体验点＋导航页；城市未知时列全部并请客人回复城市
+    return passive(openid, kefuPointsReply(st.city), 'visit_points');
   }
   if (st.kind === 'owner') {
     const thanks = '感谢您！我们每天会生成推广和预约文章帮门店带客流，欢迎多帮忙转发。';
@@ -333,9 +347,14 @@ function menuFlow(openid: string, text: string, simple: string, trigger: boolean
         saveIdentity(openid, 'owner', `${st.labels}（${st.city}）`);
         notifyAdmins(openid, '自称店主（待后台确认）', text, detail);
       }
+      // 接着逐项收集地址／类型／营业时间／照片（已知的跳过），全部为店主自报
+      const storeName = st.labels.split('；')[0].match(/^.*?(店|馆|院|会所|中心|堂|空间|工作室)/)?.[0] || st.labels.split('；')[0];
+      let ask: string | null = null;
+      try { ask = startOwnerInfo(openid, storeName, st.city); } catch { ask = null; }
+      if (ask) return passive(openid, `已登记：${st.labels}（${st.city}），店主身份待后台确认。\n${ask}\n也可以登录网页填写：${STORE_PROFILE_URL}`, 'owner_info');
       return passive(openid, `已登记：${st.labels}（${st.city}），店主身份待后台确认。${thanks}`, 'menu_owner_done');
     }
-    return passive(openid, `${head('您好，店主！')}请回复${st.labels ? (st.city ? '机器摆放位置' : '所在城市和机器摆放位置') : '门店名称、所在城市和机器摆放位置'}（例如：${st.labels ? '' : '良源养生馆 '}${st.city ? '' : '苏州 '}前台旁），我们登记后由后台确认。${trigger ? thanks : ''}`, 'menu_owner');
+    return passive(openid, `${head('您好，店主！')}请回复${st.labels ? (st.city ? '机器摆放位置' : '所在城市和机器摆放位置') : '门店名称、所在城市和机器摆放位置'}（例如：${st.labels ? '' : '良源养生馆 '}${st.city ? '' : '苏州 '}前台旁），我们登记后由后台确认。${trigger ? `${thanks}\n地址、营业时间、照片也可以登录网页填写：${STORE_PROFILE_URL}` : ''}`, 'menu_owner');
   }
   if (st.kind === 'agent') {
     if (st.city && st.label) {
@@ -345,10 +364,13 @@ function menuFlow(openid: string, text: string, simple: string, trigger: boolean
         saveIdentity(openid, 'agent', `${st.label}（${st.city}）`);
         notifyAdmins(openid, '自称代理／渠道（待后台确认）', text, detail);
       }
-      return passive(openid, `已登记：${st.label}（${st.city}），身份待后台确认，已转给负责渠道合作的同事。${st.phone ? '' : '方便的话也可以留个手机号。'}`, 'menu_agent_done');
+      let ask: string | null = null;
+      try { ask = startAgentInfo(openid, st.label, st.city); } catch { ask = null; }
+      if (ask) return passive(openid, `已登记：${st.label}（${st.city}），身份待后台确认，已转给负责渠道合作的同事。\n${ask}`, 'agent_info');
+      return passive(openid, `已登记：${st.label}（${st.city}），身份待后台确认，已转给负责渠道合作的同事。${st.phone ? '' : '方便的话也可以留个手机号。'}\n资料可登录这里补充：${STORE_PROFILE_URL}`, 'menu_agent_done');
     }
     const miss = [st.city ? '' : '所在城市', st.label ? '' : '公司名称或称呼'].filter(Boolean);
-    return passive(openid, `${head('您好，欢迎洽谈渠道合作！')}请回复${miss.join('和')}（例如：${[st.city ? '' : '苏州', st.label ? '' : '某某贸易 王先生'].filter(Boolean).join(' ')}）。`, 'menu_agent');
+    return passive(openid, `${head('您好，欢迎洽谈渠道合作！')}请回复${miss.join('和')}（例如：${[st.city ? '' : '苏州', st.label ? '' : '某某贸易 王先生'].filter(Boolean).join(' ')}）。${trigger ? `\n也可以登录网页填写城市、公司和覆盖区域：${STORE_PROFILE_URL}` : ''}`, 'menu_agent');
   }
   // 1：预约到店体验
   if (st.city && st.phone) {
@@ -658,6 +680,17 @@ async function handleText(openid: string, text: string, deadline: number): Promi
     const recentPriceAsk = lastAiSlot?.tag === 'price_clarify' && Date.now() - Date.parse(lastAiSlot.at) < LEAD_THROTTLE_MS;
     const tc = text.trim();
     if (RE_MENU_DIGIT.test(tc) && !(recentPriceAsk && /^[1-3１-３]$/.test(tc))) return menuFlow(openid, text, simple, true);
+    // 店主／代理登记后的逐项资料收集（客人要人工时跳出）
+    if (['owner_info', 'agent_info'].includes(String(lastAiSlot?.tag)) && !RE_HUMAN.test(simple)) {
+      let r: InfoResult | null = null;
+      try { r = lastAiSlot?.tag === 'owner_info' ? ownerInfoStep(openid, text) : agentInfoStep(openid, text); } catch { r = null; }
+      if (r) return infoReply(openid, r, text);
+    }
+    // 「6」列体验点后，客人回复城市：列该城市体验点地址与导航
+    if (lastAiSlot?.tag === 'visit_points' && !RE_MOBILE.test(text.replace(/[\s-]/g, '')) && simple.length <= 12) {
+      const city = KEFU_CITIES.find((x) => simple.includes(x)) || simple.match(/^(?:我在)?([\u4e00-\u9fa5]{2,4}?)(?:市|这边|附近)?$/)?.[1] || '';
+      if (city) return passive(openid, kefuPointsReply(city), 'visit_points');
+    }
     if (['menu_visitor', 'menu_owner', 'menu_agent'].includes(String(lastAiSlot?.tag)) && (RE_MOBILE.test(text.replace(/[\s-]/g, '')) || KEFU_CITIES.some((x) => simple.includes(x)) || slotRest(simple))) return menuFlow(openid, text, simple, false);
     const userTexts = (conv?.messages || []).filter((m) => m.role === 'user' && m.type === 'text').length;
     const member = listLocalCnUsers().some((u) => u.wechatOfficialOpenId === openid);
@@ -868,8 +901,8 @@ async function handleText(openid: string, text: string, deadline: number): Promi
     const ask = !lead.phoneNow && lead.phone;
     let reply = leadReply(lead.phoneNow, lead.city, lead.phone);
     // 找门店：给出可公开的门店（店名＋城市），再请留电话安排最近体验点
-    if (!lead.phoneNow && !lead.phone) reply = kefuStoresReply(lead.city);
-    else if (ask) reply = `${kefuStoresLine(lead.city)}\n${reply}`;
+    if (!lead.phoneNow && !lead.phone) reply = kefuPointsLine(lead.city) ? `${kefuPointsLine(lead.city)}\n麻烦留一下您的手机号，客服同事确认后联系您安排体验。` : kefuStoresReply(lead.city);
+    else if (ask) reply = `${kefuPointsLine(lead.city) || kefuStoresLine(lead.city)}\n${reply}`;
     return passive(openid, reply, ask ? 'lead_confirm' : 'lead');
   }
 
@@ -1013,9 +1046,16 @@ async function processMessage(msg: Record<string, string>, deadline: number): Pr
     const lbl = String(msg.Label || '');
     const city = KEFU_CITIES.find((x) => lbl.includes(x)) || lbl.match(/(?:省)?([\u4e00-\u9fa5]{2,4}?)市/)?.[1] || '';
     notifyLead(openid, lbl, placeholder, '客人发送位置/找门店');
-    return passive(openid, kefuLocationReply(lbl, city), 'lead');
+    const near = kefuNearestReply(Number(msg.Location_X), Number(msg.Location_Y), lbl);
+    return passive(openid, near || kefuLocationReply(lbl, city), 'lead');
   }
   const prev = lastAiTag(getKefuConversation(openid));
+  // 店主资料收集中发来的现场照片：登记 MediaId，后台下载存档（待后台确认后才公开）
+  if (type === 'image' && prev === 'owner_info' && msg.MediaId) {
+    let r: InfoResult | null = null;
+    try { r = ownerInfoImage(openid, String(msg.MediaId)); } catch { r = null; }
+    if (r) return infoReply(openid, r, '[图片]');
+  }
   if (['aftersale', 'repair', 'order', 'handoff'].includes(prev)) {
     notifyLead(openid, '', placeholder, `客人在${prev === 'repair' ? '报修' : '售后'}对话中发送了${label[type] || '非文字消息'}`, true);
   }

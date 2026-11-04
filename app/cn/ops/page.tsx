@@ -206,6 +206,7 @@ export default function ChinaOpsDashboardPage() {
     { title: '费率与分润', detail: paymentSettings?.updatedAt ? `平台服务费 ${paymentSettings.platformFeeRate}%` : '支付通道费与准备金尚未确认', href: '/cn/ops/finance', icon: Settings2, state: paymentSettings?.updatedAt ? '已设置' : '待设置' },
     { title: '全量数据', detail: '按会员、品牌、商品、门店、订单与资金分类', href: '/cn/ops/data', icon: Database, state: '打开数据' },
     { title: '需要推送的人', detail: '店主通知、服务号绑定、送达结果与 48 小时窗口', href: '/cn/ops/push-people', icon: Users, state: '查看名单' },
+    { title: '体验点地址与导航', detail: '地址、定位、电话与店主／代理自填资料审核', href: '/cn/ops/experience-points', icon: Store, state: '编辑地址' },
     { title: '商城预览', detail: '查看消费者实际看到的商品与推荐', href: '/cn/shop', icon: ShoppingBag, state: '查看商城' },
   ];
 
