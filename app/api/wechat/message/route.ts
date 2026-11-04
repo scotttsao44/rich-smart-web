@@ -9,6 +9,16 @@ import {
   wrapEncryptedReply,
 } from '@/lib/wechat-mp-crypto';
 import { handleKefuInbound } from '@/lib/wechat-kefu-bot';
+import { deliverPendingStorePrepayNotices } from '@/lib/cn-store-prepay';
+
+// 用户主动互动（会开启/刷新客服消息可回复次数）的消息与事件
+const INTERACTIVE_EVENTS = new Set(['subscribe', 'scan', 'click', 'view', 'scancode_push', 'scancode_waitmsg', 'location_select', 'pic_sysphoto', 'pic_photo_or_album', 'pic_weixin']);
+function isUserInteraction(msg: Record<string, string>) {
+  const type = String(msg.MsgType || '').toLowerCase();
+  if (!type) return false;
+  if (type !== 'event') return true;
+  return INTERACTIVE_EVENTS.has(String(msg.Event || '').toLowerCase());
+}
 
 // 服务号「糙米量子」服务器配置入口：
 // GET  = 微信校验 URL（signature + echostr）
@@ -59,6 +69,12 @@ export async function POST(request: NextRequest) {
     return text('bad request', 400);
   }
   if (!msg.FromUserName || !msg.ToUserName) return text('success');
+
+  // 门店付款成功通知若之前因 45015/45047 未送达，用户这次互动后补发（稍延后，避开被动回复）
+  if (isUserInteraction(msg)) {
+    const openid = msg.FromUserName;
+    setTimeout(() => { void deliverPendingStorePrepayNotices(openid); }, 1500);
+  }
 
   let reply: string | null = null;
   try {

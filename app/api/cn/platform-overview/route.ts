@@ -4,6 +4,7 @@ import { listBrandApplications, listBrandProducts } from '@/lib/local-cn-brand-m
 import { listLocalBrandMembers } from '@/lib/local-cn-brand-members';
 import { buildWechatReconciliationSummary, commerceSnapshot, listFinanceRecords, listLocalCnOrders } from '@/lib/local-cn-commerce';
 import { listStoreApplications } from '@/lib/local-cn-store-applications';
+import { listAllStorePrepayOrderViews } from '@/lib/cn-store-prepay';
 import { CAOMI_ADMIN_TEST_ACCOUNT_USER_ID, CAOMI_SCOOT_ADMIN_USER_ID, CAOMI_TEST_ACCOUNT_USER_ID, listLocalCnUsers, setLocalCnPlatformAdmin } from '@/lib/local-cn-users';
 import { BRAND_APPLICATION_DOCUMENT_LABELS, normalizeBrandApplicationDocuments } from '@/lib/brand-application-documents';
 import { displayBrandCategory } from '@/lib/cn-brand-taxonomy';
@@ -338,6 +339,19 @@ export async function GET(request: NextRequest) {
   const brandPerformance = buildBrandPerformance(brands, products, orders, members);
   const storePerformance = buildStorePerformance(stores);
   const revenueSummary = buildRevenueSummary(orders, stores, commerce);
+  // 门店预购次数（次卡）：与商城订单并列；T 档付款测试另计，不计入正式营收
+  const storePrepayAll = listAllStorePrepayOrderViews();
+  const storePrepayOrders = storePrepayAll.filter((row) => inPeriod(row, period));
+  const prepayPaid = storePrepayOrders.filter((row) => row.status === 'paid');
+  const prepayFormal = prepayPaid.filter((row) => !row.isTest);
+  const prepayTest = prepayPaid.filter((row) => row.isTest);
+  const prepayRevenue = money(prepayFormal.reduce((sum, row) => sum + number(row.amountYuan), 0));
+  const prepayTestRevenue = money(prepayTest.reduce((sum, row) => sum + number(row.amountYuan), 0));
+  const gmv = Number(paidOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0).toFixed(2));
+  const revenueWithPrepay = {
+    ...revenueSummary,
+    storePrepay: { paidOrders: prepayFormal.length, revenue: prepayRevenue, testPaidOrders: prepayTest.length, testRevenue: prepayTestRevenue },
+  };
 
   return NextResponse.json({
     viewer: { id: user.id, name: user.name },
@@ -358,7 +372,13 @@ export async function GET(request: NextRequest) {
       pendingStores: stores.filter((store) => store.status !== 'active' && store.status !== 'rejected').length,
       orders: orders.length,
       paidOrders: paidOrders.length,
-      gmv: Number(paidOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0).toFixed(2)),
+      gmv,
+      prepayOrders: storePrepayOrders.length,
+      prepayPaidOrders: prepayFormal.length,
+      prepayRevenue,
+      prepayTestPaidOrders: prepayTest.length,
+      prepayTestRevenue,
+      gmvTotal: money(gmv + prepayRevenue),
       walletEntries: commerce.walletEntries.length,
       withdrawals: commerce.withdrawals.length,
     },
@@ -372,7 +392,8 @@ export async function GET(request: NextRequest) {
     finance,
     brandPerformance,
     storePerformance,
-    revenueSummary,
+    revenueSummary: revenueWithPrepay,
+    storePrepayOrders,
   });
 }
 

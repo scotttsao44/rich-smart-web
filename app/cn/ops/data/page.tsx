@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, BadgeDollarSign, Boxes, Building2, PackageCheck, RefreshCw, ShieldCheck, ShoppingCart, Store, Users } from 'lucide-react';
 import ChinaLogoutButton from '@/components/ChinaLogoutButton';
 import WechatPayReconciliationCenter, { ReconcileOrderItem, ReconciliationSummary } from '@/components/WechatPayReconciliationCenter';
+import StorePrepayOrdersAdmin, { type StorePrepayAdminRow } from '@/components/StorePrepayOrdersAdmin';
 
 type Overview = {
   viewer: { id: number; name: string };
@@ -16,6 +17,7 @@ type Overview = {
   orders: Array<Record<string, any>>;
   allOrders?: Array<Record<string, any>>;
   reconciliation?: ReconciliationSummary;
+  storePrepayOrders?: StorePrepayAdminRow[];
   finance: { walletEntries?: Array<Record<string, any>>; withdrawals?: Array<Record<string, any>> };
 };
 
@@ -79,8 +81,8 @@ export default function PlatformDataPage() {
       { label: '已通过品牌', value: summary.brands || 0, note: `${summary.pendingBrands || 0} 待审核`, icon: Building2, view: 'brands' as const },
       { label: '在售商品', value: summary.products || 0, note: `${summary.pendingProducts || 0} 待审核`, icon: Boxes, view: 'products' as const },
       { label: '已开通门店', value: summary.stores || 0, note: `${summary.pendingStores || 0} 处理中`, icon: Store, view: 'stores' as const },
-      { label: '订单', value: summary.orders || 0, note: `${summary.paidOrders || 0} 已付款`, icon: ShoppingCart, view: 'orders' as const },
-      { label: '成交额', value: money(summary.gmv), icon: BadgeDollarSign, view: 'finance' as const },
+      { label: '订单', value: (summary.orders || 0) + (summary.prepayOrders || 0), note: `商城 ${summary.paidOrders || 0} 已付款 · 次卡 ${summary.prepayPaidOrders || 0} 已付款`, icon: ShoppingCart, view: 'orders' as const },
+      { label: '成交额', value: money(summary.gmvTotal ?? summary.gmv), note: `商城 ${money(summary.gmv)} · 次卡 ${money(summary.prepayRevenue)}${summary.prepayTestRevenue ? `（另测试 ${money(summary.prepayTestRevenue)} 未计入）` : ''}`, icon: BadgeDollarSign, view: 'finance' as const },
     ];
   }, [overview]);
 
@@ -135,7 +137,7 @@ export default function PlatformDataPage() {
           {!loading && active === 'brands' ? <Rows kind="brands" rows={overview?.brands || []} primary="brandName" secondary="companyName" status="status" empty="暂无品牌申请" /> : null}
           {!loading && active === 'products' ? <Rows kind="products" rows={overview?.products || []} primary="name" secondary="brandName" status="status" empty="暂无商品" /> : null}
           {!loading && active === 'stores' ? <Rows kind="stores" rows={overview?.stores || []} primary="name" secondary="address" status="status" empty="暂无门店申请" /> : null}
-          {!loading && active === 'orders' ? <div className="p-4"><WechatPayReconciliationCenter orders={((overview?.allOrders || overview?.orders || []) as unknown) as ReconcileOrderItem[]} summary={overview?.reconciliation || null} onRefresh={load} /></div> : null}
+          {!loading && active === 'orders' ? <div className="p-4"><WechatPayReconciliationCenter orders={((overview?.allOrders || overview?.orders || []) as unknown) as ReconcileOrderItem[]} summary={overview?.reconciliation || null} onRefresh={load} /><div className="mt-4"><StorePrepayOrdersAdmin rows={overview?.storePrepayOrders || []} /></div></div> : null}
           {!loading && active === 'finance' ? <div className="grid gap-0 md:grid-cols-2"><FinanceRows title="分润流水" rows={overview?.finance?.walletEntries || []} /><FinanceRows title="提现申请" rows={overview?.finance?.withdrawals || []} /></div> : null}
         </section>
 

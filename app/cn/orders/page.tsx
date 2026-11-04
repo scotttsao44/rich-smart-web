@@ -28,6 +28,28 @@ interface MemberOrder {
   items?: MemberOrderItem[];
 }
 
+interface PrepayOrder {
+  orderNo: string;
+  applicationId: string;
+  storeName: string;
+  tier: string;
+  isTest: boolean;
+  amountYuan: number;
+  uses: number;
+  status: 'pending' | 'paid';
+  paidAt?: string;
+  expiresAt?: string;
+  createdAt?: string;
+}
+
+function cnDateTime(value?: string) {
+  return value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '—';
+}
+
+function cnDate(value?: string) {
+  return value ? new Date(value).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '—';
+}
+
 function statusLabel(status?: string, paymentStatus?: string) {
   if (paymentStatus === 'paid' || status === 'paid' || status === 'completed') {
     return { text: '已支付 · 待发货', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
@@ -51,6 +73,7 @@ function paymentMethodLabel(method?: string) {
 export default function ChinaOrdersPage() {
   const { user, isAdmin } = useAuth();
   const [orders, setOrders] = useState<MemberOrder[]>([]);
+  const [prepayOrders, setPrepayOrders] = useState<PrepayOrder[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadOrders = useCallback(async () => {
@@ -61,9 +84,14 @@ export default function ChinaOrdersPage() {
     setLoading(true);
     try {
       const query = `/api/orders?userId=${user.id}&marketRegion=CN&currency=CNY`;
-      const res = await fetch(query, { cache: 'no-store' });
+      const [res, prepayRes] = await Promise.all([
+        fetch(query, { cache: 'no-store' }),
+        fetch('/api/cn/store-prepay-orders', { cache: 'no-store' }).catch(() => null),
+      ]);
       const data = await res.json().catch(() => ({}));
       setOrders(Array.isArray(data.orders) ? data.orders : []);
+      const prepayData = prepayRes && prepayRes.ok ? await prepayRes.json().catch(() => ({})) : {};
+      setPrepayOrders(Array.isArray(prepayData.orders) ? prepayData.orders : []);
     } finally {
       setLoading(false);
     }
@@ -104,7 +132,7 @@ export default function ChinaOrdersPage() {
               我的订单
             </h1>
             <p className="mt-1 text-sm text-stone-600">
-              查看您在糙米健康商城的个人选购订单、付款状态与收货信息
+              查看您在糙米健康商城的个人选购订单、门店预购次数（次卡）、付款状态与收货信息
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -133,7 +161,7 @@ export default function ChinaOrdersPage() {
             <div className="rounded-2xl border border-stone-200 bg-white p-12 text-center text-stone-500">
               正在加载您的订单记录...
             </div>
-          ) : orders.length === 0 ? (
+          ) : orders.length === 0 && prepayOrders.length === 0 ? (
             <div className="rounded-3xl border border-stone-200/80 bg-white p-12 text-center shadow-xs">
               <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
                 <ShoppingBag className="h-7 w-7" />
@@ -159,6 +187,38 @@ export default function ChinaOrdersPage() {
             </div>
           ) : (
             <div className="space-y-4">
+              {prepayOrders.map((order) => (
+                <Link
+                  key={order.orderNo}
+                  href={order.status === 'paid' ? '/cn/member#store-applications' : '/cn/member/store-application'}
+                  className="block rounded-2xl border border-teal-200 bg-white p-5 shadow-xs transition hover:border-teal-600"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-100 pb-3">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                      <span className="rounded-full bg-teal-50 px-2.5 py-0.5 font-bold text-teal-800">预购次数（次卡）</span>
+                      {order.isTest ? <span className="rounded-full bg-amber-50 px-2.5 py-0.5 font-bold text-amber-800">付款测试</span> : null}
+                      <span className="font-mono font-semibold text-stone-800">订单号：{order.orderNo}</span>
+                    </div>
+                    <span className={`inline-flex items-center gap-1 rounded-full border px-3 py-0.5 text-xs font-bold ${order.status === 'paid' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-amber-100 text-amber-800 border-amber-200'}`}>
+                      {order.status === 'paid' ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Clock className="h-3.5 w-3.5" />}
+                      {order.status === 'paid' ? '已付款' : '待付款'}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-2 text-sm text-stone-700 sm:grid-cols-2">
+                    <div><span className="text-stone-500">门店：</span><span className="font-bold text-stone-900">{order.storeName}</span></div>
+                    <div><span className="text-stone-500">档位 / 次数：</span><span className="font-bold text-stone-900">{order.tier} 档 · {order.uses} 次</span></div>
+                    <div><span className="text-stone-500">付款时间：</span>{order.status === 'paid' ? `${cnDateTime(order.paidAt)}（北京时间）` : '—'}</div>
+                    <div><span className="text-stone-500">到期日：</span>{order.status === 'paid' ? cnDate(order.expiresAt) : '付款后起算 3 个月'}</div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-3 text-xs text-stone-600">
+                    <span className="font-bold text-teal-800">{order.status === 'paid' ? '查看申请进度 →' : '继续付款 →'}</span>
+                    <div className="text-right">
+                      <span className="text-stone-500">金额：</span>
+                      <span className="text-base font-black text-emerald-900">¥{Number(order.amountYuan || 0).toFixed(2)}</span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
               {orders.map((order) => {
                 const badge = statusLabel(order.status, order.paymentStatus);
                 return (

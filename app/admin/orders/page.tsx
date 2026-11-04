@@ -5,6 +5,7 @@ import { useAuth } from '@/app/providers';
 import { useRouter } from 'next/navigation';
 import { ShoppingBag } from 'lucide-react';
 import WechatPayReconciliationCenter, { ReconcileOrderItem } from '@/components/WechatPayReconciliationCenter';
+import StorePrepayOrdersAdmin from '@/components/StorePrepayOrdersAdmin';
 
 interface OrderRow {
   orders: {
@@ -140,6 +141,8 @@ export default function AdminOrders() {
           statusOptions={statusOptions}
         />
       )}
+
+      <StorePrepayOrdersAdmin fetchAll />
     </div>
   );
 }

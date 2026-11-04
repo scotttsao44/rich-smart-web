@@ -27,6 +27,7 @@ import {
 import ChinaLogoutButton from '@/components/ChinaLogoutButton';
 import StoreApplicationReview from '@/components/StoreApplicationReview';
 import WechatPayReconciliationCenter, { ReconcileOrderItem, ReconciliationSummary } from '@/components/WechatPayReconciliationCenter';
+import StorePrepayOrdersAdmin, { type StorePrepayAdminRow } from '@/components/StorePrepayOrdersAdmin';
 
 type Period = 'today' | 'week' | 'month' | 'all';
 
@@ -64,6 +65,7 @@ type PlatformOverview = {
   orders: Array<Record<string, any>>;
   allOrders?: Array<Record<string, any>>;
   reconciliation?: ReconciliationSummary;
+  storePrepayOrders?: StorePrepayAdminRow[];
   finance?: { withdrawals?: Array<Record<string, any>> };
   brandPerformance?: BrandPerformance[];
 };
@@ -200,7 +202,7 @@ export default function ChinaOpsDashboardPage() {
   const functions = [
     { title: '会员与权限', detail: `${members.length} 位会员 · ${memberSummary.platformAdmins} 位平台主管`, href: '/cn/ops/data?view=members', icon: Users, state: '查看会员' },
     { title: '品牌与商品', detail: `${approvedBrands} 个品牌 · ${approvedProducts} 件已通过商品`, href: '/cn/ops/brands', icon: Building2, state: `${pendingBrands + pendingProducts} 项待办` },
-    { title: '订单与交易', detail: `${orders.length} 笔订单 · ${paidOrders} 笔已付款`, href: '/cn/ops/data?view=orders', icon: ShoppingCart, state: '查看订单' },
+    { title: '订单与交易', detail: `${orders.length} 笔商城订单 · ${paidOrders} 笔已付款 · 次卡 ${Number(summary.prepayPaidOrders || 0)} 笔已付款`, href: '/cn/ops/data?view=orders', icon: ShoppingCart, state: '查看订单' },
     { title: '财务与提现', detail: `${pendingWithdrawals} 笔提现 · ${pendingBankTransfers} 笔转账待确认`, href: '/cn/ops/finance', icon: BadgeDollarSign, state: '进入财务' },
     { title: '门店与设备', detail: `${Number(summary.stores || 0)} 家运营中 · ${pendingStores} 家处理中`, href: '#store-review', icon: Store, state: '处理申请' },
     { title: '费率与分润', detail: paymentSettings?.updatedAt ? `平台服务费 ${paymentSettings.platformFeeRate}%` : '支付通道费与准备金尚未确认', href: '/cn/ops/finance', icon: Settings2, state: paymentSettings?.updatedAt ? '已设置' : '待设置' },
@@ -245,7 +247,7 @@ export default function ChinaOpsDashboardPage() {
             { label: '待处理', value: pendingTotal, note: '需要平台主管处理', icon: Clock3, color: 'text-red-700', href: '#todo' },
             { label: '会员总数', value: memberSummary.total, note: `近 7 天新增 ${memberSummary.newThisWeek}`, icon: Users, color: 'text-teal-800', href: '/cn/ops/data?view=members' },
             { label: '运营品牌', value: approvedBrands, note: `${pendingBrands} 个待审核`, icon: Building2, color: 'text-amber-700', href: '#brands' },
-            { label: '成交金额', value: money(summary.gmv), note: `${paidOrders} 笔已付款订单`, icon: BadgeDollarSign, color: 'text-emerald-700', href: '/cn/ops/data?view=orders' },
+            { label: '成交金额', value: money(summary.gmvTotal ?? summary.gmv), note: `商城 ${paidOrders} 笔 · 次卡 ${Number(summary.prepayPaidOrders || 0)} 笔${summary.prepayTestRevenue ? ' · 测试档未计入' : ''}`, icon: BadgeDollarSign, color: 'text-emerald-700', href: '/cn/ops/data?view=orders' },
           ].map(({ label, value, note, icon: Icon, color, href }) => (
             <Link key={label} href={href} className="rounded-md border border-stone-200 bg-white p-4 hover:border-teal-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700">
               <div className="flex items-center justify-between"><span className="text-sm font-bold text-stone-500">{label}</span><Icon className={`h-5 w-5 ${color}`} /></div>
@@ -261,6 +263,7 @@ export default function ChinaOpsDashboardPage() {
             summary={overview?.reconciliation || null}
             onRefresh={load}
           />
+          <div className="mt-4"><StorePrepayOrdersAdmin rows={overview?.storePrepayOrders || []} /></div>
         </div>
 
         <section id="todo" className="mt-7 scroll-mt-4 border-t border-stone-300 pt-5">
