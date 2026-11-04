@@ -6,6 +6,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useAuth } from '@/app/providers';
 import { LogIn, Mail, Lock, MessageCircle } from 'lucide-react';
+import AdminWechatScan from '@/components/AdminWechatScan';
 
 export default function LoginPage() {
   const [identifier, setIdentifier] = useState('');
@@ -14,6 +15,8 @@ export default function LoginPage() {
   const [returnTo, setReturnTo] = useState('/portal');
   const [adminMode, setAdminMode] = useState(false);
   const [paramsReady, setParamsReady] = useState(false);
+  const [adminScan, setAdminScan] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
@@ -26,6 +29,8 @@ export default function LoginPage() {
     const isAdminLogin = params.get('mode') === 'admin' || params.get('admin') === '1' || next.startsWith('/admin');
     const ref = params.get('ref') || localStorage.getItem('richsmart_referral_code') || '';
     setAdminMode(isAdminLogin);
+    // 电脑端（非微信）管理员登录：优先微信扫码验证；邮箱密码登录保留为次要入口
+    setAdminScan(isAdminLogin && !/micromessenger/i.test(navigator.userAgent || ''));
     if (next.startsWith('/') && !next.startsWith('//')) {
       setReturnTo(next);
     }
@@ -93,7 +98,16 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        {adminScan ? (
+          <div className="mb-4">
+            <AdminWechatScan next={/^\/cn\/ops(\/[A-Za-z0-9\-_/]*)?$/.test(returnTo) ? returnTo : '/cn/ops'} />
+            {!showPassword ? (
+              <div className="mt-4 text-center"><button type="button" onClick={() => setShowPassword(true)} className="text-xs text-gray-500 underline">使用邮箱密码登录</button></div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {adminScan && !showPassword ? null : <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="label">Email 或 手机号号码</label>
             <div className="relative">
@@ -132,7 +146,7 @@ export default function LoginPage() {
             <LogIn className="h-4 w-4" />
             {loading ? '登录中...' : '登录'}
           </button>
-        </form>
+        </form>}
 
         {!adminMode && (
           <>

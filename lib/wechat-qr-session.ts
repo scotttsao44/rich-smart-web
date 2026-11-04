@@ -4,7 +4,10 @@ import { randomBytes } from 'crypto';
 
 export type WechatQrSession = {
   sid: string;
-  status: 'pending' | 'scanned' | 'confirmed' | 'expired' | 'consumed';
+  status: 'pending' | 'scanned' | 'confirmed' | 'expired' | 'consumed' | 'denied';
+  // 'admin'：电脑端「微信扫码验证管理员」；只能由 /api/auth/wechat/kefu-admin 以白名单 openid 确认
+  purpose?: 'admin';
+  adminOpenid?: string;
   referrerCode: string;
   returnTo: string;
   createdAt: number;
@@ -44,7 +47,7 @@ function writeSessions(sessions: WechatQrSession[]) {
   renameSync(tmp, file);
 }
 
-export function createWechatQrSession(input: { referrerCode?: string; returnTo?: string }): WechatQrSession {
+export function createWechatQrSession(input: { referrerCode?: string; returnTo?: string; purpose?: 'admin' }): WechatQrSession {
   const now = Date.now();
   const sessions = readSessions().filter((s) => now - s.createdAt < 15 * 60 * 1000);
   const sid = randomBytes(12).toString('hex');
@@ -55,6 +58,7 @@ export function createWechatQrSession(input: { referrerCode?: string; returnTo?:
     returnTo: String(input.returnTo || '/cn/member').trim() || '/cn/member',
     createdAt: now,
     expiresAt: now + 5 * 60 * 1000,
+    ...(input.purpose === 'admin' ? { purpose: 'admin' as const } : {}),
   };
   sessions.push(session);
   writeSessions(sessions);
@@ -98,14 +102,17 @@ export function markWechatQrSessionScanned(sid: string, nicknameHint?: string): 
 
 export function confirmWechatQrSession(
   sid: string,
-  input: { memberId: number; wxIdentityToken?: string; nickname?: string },
+  input: { memberId: number; wxIdentityToken?: string; nickname?: string; adminOpenid?: string },
 ): WechatQrSession | null {
   const cleanSid = String(sid || '').trim();
   if (!cleanSid) return null;
   const sessions = readSessions();
   const session = sessions.find((s) => s.sid === cleanSid) || null;
   if (!session) return null;
-  if (Date.now() > session.expiresAt || session.status === 'expired' || session.status === 'consumed') return null;
+  if (Date.now() > session.expiresAt || session.status === 'expired' || session.status === 'consumed' || session.status === 'denied') return null;
+  // 管理员扫码会话只接受带白名单 openid 的确认；会员扫码流程不能确认它，反之亦然
+  if ((session.purpose === 'admin') !== Boolean(input.adminOpenid)) return null;
+  if (input.adminOpenid) session.adminOpenid = input.adminOpenid;
   session.status = 'confirmed';
   session.confirmedAt = Date.now();
   session.memberId = input.memberId;
@@ -129,7 +136,22 @@ export function consumeConfirmedWechatQrSession(sid: string): WechatQrSession | 
   }
   session.status = 'consumed';
   session.consumedAt = Date.now();
+  const result = { ...session };
   delete session.wxIdentityToken;
+  delete session.adminOpenid;
+  delete result.wxIdentityToken;
+  writeSessions(sessions);
+  return result;
+}
+
+// 管理员扫码：非白名单微信扫码 → 标记 denied，电脑端轮询显示「无管理员权限」
+export function denyWechatQrSession(sid: string): WechatQrSession | null {
+  const cleanSid = String(sid || '').trim();
+  if (!cleanSid) return null;
+  const sessions = readSessions();
+  const session = sessions.find((s) => s.sid === cleanSid) || null;
+  if (!session || session.purpose !== 'admin' || session.status === 'consumed' || session.status === 'expired') return null;
+  session.status = 'denied';
   writeSessions(sessions);
   return session;
 }

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
+import AdminWechatScan from '@/components/AdminWechatScan';
 
 type Notice = { id: string; at: string; targetLabel: string; event: string; city: string; phoneTail: string; memberId: number; role: string; channel: string; status: string; errcode?: string; ackAt?: string; escalatedAt?: string; test?: boolean; simulated?: boolean };
 type Win = { open: boolean; label: string; lastInteractionAt: string | null };
@@ -41,6 +42,8 @@ export default function PushPeoplePage() {
   const [inviteResults, setInviteResults] = useState<InviteResult[] | null>(null);
   const [copied, setCopied] = useState('');
   const [denied, setDenied] = useState(false);
+  const [inWechat, setInWechat] = useState(true);
+  useEffect(() => { setInWechat(/micromessenger/i.test(navigator.userAgent || '')); }, []);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
   const [wecomBusy, setWecomBusy] = useState('');
@@ -152,11 +155,20 @@ export default function PushPeoplePage() {
         {denied ? (
           <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm" data-testid="push-denied">
             <div className="font-black text-amber-900">当前登录身份没有平台管理员权限，以下数据和按钮无法使用。</div>
-            <p className="mt-1 font-semibold text-amber-800">请在微信内点「以管理员身份进入」，或用管理员账号登录后再打开本页。</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <a href="/api/auth/wechat/kefu-admin?next=%2Fcn%2Fops%2Fpush-people" className="rounded-lg bg-teal-700 px-3 py-2 font-bold text-white">以管理员身份进入</a>
-              <a href="/login?mode=admin&next=%2Fcn%2Fops%2Fpush-people" className="rounded-lg border border-stone-300 bg-white px-3 py-2 font-bold">管理员登录</a>
-            </div>
+            {inWechat ? (
+              <>
+                <p className="mt-1 font-semibold text-amber-800">请在微信内点「以管理员身份进入」，或用管理员账号登录后再打开本页。</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <a href="/api/auth/wechat/kefu-admin?next=%2Fcn%2Fops%2Fpush-people" className="rounded-lg bg-teal-700 px-3 py-2 font-bold text-white">以管理员身份进入</a>
+                  <a href="/login?mode=admin&next=%2Fcn%2Fops%2Fpush-people" className="rounded-lg border border-stone-300 bg-white px-3 py-2 font-bold">管理员登录</a>
+                </div>
+              </>
+            ) : (
+              <div className="mt-4 rounded-lg bg-white p-4">
+                <AdminWechatScan next="/cn/ops/push-people" />
+                <div className="mt-3 text-center"><a href="/login?mode=admin&next=%2Fcn%2Fops%2Fpush-people" className="text-xs font-semibold text-stone-500 underline">使用邮箱密码登录</a></div>
+              </div>
+            )}
           </div>
         ) : null}
         {denied ? null : <>

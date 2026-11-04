@@ -5,6 +5,7 @@ import { payOrigin } from '@/lib/wechat-pay-openid';
 import { isWechatBrowser } from '@/lib/wechat-web-auth';
 import { findLocalCnMemberIdByWechatIdentity } from '@/lib/local-cn-member-identities';
 import { findLocalCnUserById } from '@/lib/local-cn-users';
+import { confirmWechatQrSession, denyWechatQrSession, getWechatQrSession, markWechatQrSessionScanned } from '@/lib/wechat-qr-session';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +26,20 @@ function opsPath(value: string | null) {
   return /^\/cn\/ops(\/[A-Za-z0-9\-_/]*)?$/.test(v) ? v : null;
 }
 
+// 电脑端「微信扫码验证管理员」：手机扫码进入 ?sid=…，结果页 /cn/wechat-scan/admin（手机端不写入登录状态）
+const SCAN_RESULT = '/cn/wechat-scan/admin';
+
+function scanSid(returnTo: string) {
+  const m = /^\/cn\/wechat-scan\/admin\?sid=([a-f0-9]{16,64})$/.exec(returnTo);
+  return m ? m[1] : null;
+}
+
+function scanResult(r: string) {
+  const response = NextResponse.redirect(new URL(`${SCAN_RESULT}?r=${r}`, payOrigin()));
+  clearOAuthStateCookie(response);
+  return response;
+}
+
 function loginRedirect(next: string) {
   const response = NextResponse.redirect(new URL(`/login?mode=admin&next=${encodeURIComponent(next)}`, payOrigin()));
   clearOAuthStateCookie(response);
@@ -36,6 +51,25 @@ export async function GET(request: NextRequest) {
   const appId = process.env.WECHAT_OFFICIAL_APP_ID || '';
   const appSecret = process.env.WECHAT_OFFICIAL_APP_SECRET || '';
   const code = params.get('code');
+
+  const sid = String(params.get('sid') || '').trim();
+  if (!code && sid) {
+    const qr = /^[a-f0-9]{16,64}$/.test(sid) ? getWechatQrSession(sid) : null;
+    if (!qr || qr.purpose !== 'admin' || !['pending', 'scanned'].includes(qr.status)) return scanResult('expired');
+    if (!isWechatBrowser(request.headers.get('user-agent') || '')) return scanResult('wechat');
+    if (!appId || !appSecret || process.env.DATABASE_URL || kefuAdminOpenids().length === 0) return scanResult('error');
+    markWechatQrSessionScanned(sid);
+    const state = createOAuthState('wechat_official', `${SCAN_RESULT}?sid=${sid}`);
+    const authorize = new URL('https://open.weixin.qq.com/connect/oauth2/authorize');
+    authorize.searchParams.set('appid', appId);
+    authorize.searchParams.set('redirect_uri', `${payOrigin()}/api/auth/wechat/kefu-admin`);
+    authorize.searchParams.set('response_type', 'code');
+    authorize.searchParams.set('scope', 'snsapi_base');
+    authorize.searchParams.set('state', state);
+    const response = NextResponse.redirect(`${authorize.toString()}#wechat_redirect`);
+    setOAuthStateCookie(response, state);
+    return response;
+  }
 
   if (!code) {
     const next = opsPath(params.get('next')) || inboxPath(params.get('openid'));
@@ -57,8 +91,10 @@ export async function GET(request: NextRequest) {
   }
 
   let next = INBOX;
+  let qrSid: string | null = null;
   try {
     const payload = verifyOAuthState(request, 'wechat_official', params.get('state'));
+    qrSid = scanSid(payload.returnTo);
     if (payload.returnTo === INBOX || payload.returnTo.startsWith(`${INBOX}?`) || opsPath(payload.returnTo)) next = payload.returnTo;
     const tokenUrl = new URL('https://api.weixin.qq.com/sns/oauth2/access_token');
     tokenUrl.searchParams.set('appid', appId);
@@ -69,9 +105,17 @@ export async function GET(request: NextRequest) {
     const data = await res.json().catch(() => ({}));
     const openid = String(data?.openid || '');
     if (!res.ok || data?.errcode || !openid) throw new Error('wechat oauth failed');
-    if (!kefuAdminOpenids().includes(openid)) throw new Error('openid not allowlisted');
-    const memberId = findLocalCnMemberIdByWechatIdentity(appId, openid, data?.unionid || null);
+    const allowlisted = kefuAdminOpenids().includes(openid);
+    const memberId = allowlisted ? findLocalCnMemberIdByWechatIdentity(appId, openid, data?.unionid || null) : null;
     const member = memberId ? findLocalCnUserById(memberId) : null;
+    if (qrSid) {
+      if (!member || member.wechatOfficialOpenId !== openid) {
+        denyWechatQrSession(qrSid);
+        return scanResult('denied');
+      }
+      return scanResult(confirmWechatQrSession(qrSid, { memberId: member.id, nickname: member.name, adminOpenid: openid }) ? 'ok' : 'expired');
+    }
+    if (!allowlisted) throw new Error('openid not allowlisted');
     if (!member || member.wechatOfficialOpenId !== openid) throw new Error('member not bound');
     const user: SessionUser = {
       id: member.id,
@@ -88,6 +132,7 @@ export async function GET(request: NextRequest) {
     };
     return redirectWithSession(new URL(next, payOrigin()).toString(), user);
   } catch {
+    if (qrSid) return scanResult('error');
     return loginRedirect(next);
   }
 }

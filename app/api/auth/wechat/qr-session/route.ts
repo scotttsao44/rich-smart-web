@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createHash, randomBytes } from 'crypto';
-import { createSessionToken, setSessionCookie, type SessionUser } from '@/lib/auth';
+import { createSessionToken, kefuAdminOpenids, setSessionCookie, type SessionUser } from '@/lib/auth';
+import { payOrigin } from '@/lib/wechat-pay-openid';
 import {
   bindImmutableLocalCnReferral,
   findLocalCnUserById,
@@ -69,6 +70,9 @@ export async function GET(request: NextRequest) {
   if (!current || current.status === 'expired' || current.status === 'consumed') {
     return NextResponse.json({ status: 'expired', consumed: current?.status === 'consumed' });
   }
+  if (current.status === 'denied') {
+    return NextResponse.json({ status: 'denied' });
+  }
   if (current.status !== 'confirmed' || !current.memberId) {
     return NextResponse.json({
       status: current.status,
@@ -88,6 +92,15 @@ export async function GET(request: NextRequest) {
   }
 
   const sessionUser = toSessionUser(user);
+  if (session.purpose === 'admin') {
+    // 管理员扫码：再次核对白名单与绑定，写入 kefuAdminOpenid（每次请求仍由 getFreshSessionUser 重新核对）
+    const openid = String(session.adminOpenid || '');
+    if (!openid || !kefuAdminOpenids().includes(openid) || user.wechatOfficialOpenId !== openid) {
+      return NextResponse.json({ status: 'denied' });
+    }
+    sessionUser.kefuAdminOpenid = openid;
+    sessionUser.emailCredentialVersion = user.emailRegistrationId ? (user.emailCredentialVersion || 1) : undefined;
+  }
   const token = createSessionToken(sessionUser);
   const response = NextResponse.json({
     status: 'confirmed',
@@ -105,6 +118,19 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
     const action = String(body.action || 'create').trim();
+
+    if (action === 'create' && body.purpose === 'admin') {
+      // 电脑端「微信扫码验证管理员」：手机微信扫码 → /api/auth/wechat/kefu-admin?sid=…（服务号静默授权 + 白名单）
+      const rawNext = String(body.returnTo || '').trim();
+      const returnTo = /^\/cn\/ops(\/[A-Za-z0-9\-_/]*)?$/.test(rawNext) ? rawNext : '/cn/ops';
+      const session = createWechatQrSession({ returnTo, purpose: 'admin' });
+      return NextResponse.json({
+        sid: session.sid,
+        scanUrl: `${payOrigin()}/api/auth/wechat/kefu-admin?sid=${encodeURIComponent(session.sid)}`,
+        status: session.status,
+        expiresAt: session.expiresAt,
+      });
+    }
 
     if (action === 'create') {
       const bodyRef = String(body.referrerCode || '').trim().toUpperCase();
