@@ -19,6 +19,12 @@ function inboxPath(openid: string | null) {
   return o ? `${INBOX}?openid=${encodeURIComponent(o)}` : INBOX;
 }
 
+// 后台页回跳：仅允许 /cn/ops 及其子路径（站内相对路径）
+function opsPath(value: string | null) {
+  const v = String(value || '').trim();
+  return /^\/cn\/ops(\/[A-Za-z0-9\-_/]*)?$/.test(v) ? v : null;
+}
+
 function loginRedirect(next: string) {
   const response = NextResponse.redirect(new URL(`/login?mode=admin&next=${encodeURIComponent(next)}`, payOrigin()));
   clearOAuthStateCookie(response);
@@ -32,7 +38,7 @@ export async function GET(request: NextRequest) {
   const code = params.get('code');
 
   if (!code) {
-    const next = inboxPath(params.get('openid'));
+    const next = opsPath(params.get('next')) || inboxPath(params.get('openid'));
     const current = await getFreshSessionUser(request).catch(() => null);
     if (hasPlatformAdminAccess(current)) return NextResponse.redirect(new URL(next, payOrigin()));
     if (!isWechatBrowser(request.headers.get('user-agent') || '') || !appId || !appSecret || process.env.DATABASE_URL || kefuAdminOpenids().length === 0) {
@@ -53,7 +59,7 @@ export async function GET(request: NextRequest) {
   let next = INBOX;
   try {
     const payload = verifyOAuthState(request, 'wechat_official', params.get('state'));
-    if (payload.returnTo === INBOX || payload.returnTo.startsWith(`${INBOX}?`)) next = payload.returnTo;
+    if (payload.returnTo === INBOX || payload.returnTo.startsWith(`${INBOX}?`) || opsPath(payload.returnTo)) next = payload.returnTo;
     const tokenUrl = new URL('https://api.weixin.qq.com/sns/oauth2/access_token');
     tokenUrl.searchParams.set('appid', appId);
     tokenUrl.searchParams.set('secret', appSecret);

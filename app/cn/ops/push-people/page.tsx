@@ -40,12 +40,19 @@ export default function PushPeoplePage() {
   const [inviting, setInviting] = useState(false);
   const [inviteResults, setInviteResults] = useState<InviteResult[] | null>(null);
   const [copied, setCopied] = useState('');
+  const [denied, setDenied] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
+  const [wecomBusy, setWecomBusy] = useState('');
+  const [wecomMsg, setWecomMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [plan, setPlan] = useState<{ summary: Record<string, number>; plan: Array<{ memberId: number; name: string; tierLabel: string; action: string; reason: string; channel?: string }> } | null>(null);
 
   const load = useCallback(async () => {
     const response = await fetch('/api/cn/ops/push-people', { cache: 'no-store' });
     const body = await response.json().catch(() => ({}));
+    if (response.status === 401 || response.status === 403) { setDenied(true); return; }
     if (!response.ok) { setError(body.error || '读取失败'); return; }
+    setDenied(false);
     setError('');
     setData(body);
     setDrafts(Object.fromEntries((body.points || []).map((p: Data['points'][number]) => [p.id, p.ownerMemberIds.join(',')])));
@@ -54,19 +61,38 @@ export default function PushPeoplePage() {
   const loadWecom = useCallback(async () => {
     const response = await fetch('/api/cn/ops/wecom', { cache: 'no-store' });
     const body = await response.json().catch(() => ({}));
+    if (response.status === 401 || response.status === 403) { setDenied(true); return; }
     if (response.ok) setWecom(body);
+    else setWecomMsg({ ok: false, text: body.error || '企业微信数据读取失败' });
   }, []);
 
   useEffect(() => { load(); loadWecom(); }, [load, loadWecom]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try { await Promise.all([load(), loadWecom()]); setRefreshedAt(new Date()); } finally { setRefreshing(false); }
+  };
 
   const wecomOf = (memberId: number) => wecom?.rows.find((r) => r.memberId === memberId) || null;
   const toggle = (memberId: number) => setSelected((prev) => { const next = new Set(prev); if (next.has(memberId)) next.delete(memberId); else next.add(memberId); return next; });
 
   const wecomAction = async (action: 'sync' | 'default-qr') => {
-    const response = await fetch('/api/cn/ops/wecom', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) setError(body.error || '操作失败');
-    else if (body.overview) setWecom(body.overview);
+    setWecomBusy(action);
+    setWecomMsg(null);
+    try {
+      const response = await fetch('/api/cn/ops/wecom', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) });
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 401 || response.status === 403) { setDenied(true); return; }
+      if (!response.ok) setWecomMsg({ ok: false, text: body.error || '操作失败' });
+      else {
+        if (body.overview) setWecom(body.overview);
+        setWecomMsg({ ok: true, text: action === 'sync' ? `已同步：已加客户 ${body.overview?.count ?? '—'} 人` : '默认二维码已生成' });
+      }
+    } catch {
+      setWecomMsg({ ok: false, text: '网络异常，请稍后再试' });
+    } finally {
+      setWecomBusy('');
+    }
   };
 
   const invite = async () => {
@@ -117,8 +143,23 @@ export default function PushPeoplePage() {
             <h1 className="mt-2 text-2xl font-black">需要推送的人</h1>
             <p className="mt-1 text-sm font-semibold text-stone-500">店主／体验点负责人、服务号绑定、最近通知与送达结果、48 小时客服消息窗口</p>
           </div>
-          <button type="button" onClick={load} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-bold"><RefreshCw className="h-4 w-4" />刷新</button>
+          <div className="flex items-center gap-2">
+            {refreshedAt ? <span className="text-xs font-semibold text-stone-500" data-testid="refreshed-at">已刷新 {refreshedAt.toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}</span> : null}
+            <button type="button" onClick={refresh} disabled={refreshing} className="inline-flex items-center gap-2 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-bold disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? '刷新中…' : '刷新'}</button>
+          </div>
         </div>
+
+        {denied ? (
+          <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm" data-testid="push-denied">
+            <div className="font-black text-amber-900">当前登录身份没有平台管理员权限，以下数据和按钮无法使用。</div>
+            <p className="mt-1 font-semibold text-amber-800">请在微信内点「以管理员身份进入」，或用管理员账号登录后再打开本页。</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <a href="/api/auth/wechat/kefu-admin?next=%2Fcn%2Fops%2Fpush-people" className="rounded-lg bg-teal-700 px-3 py-2 font-bold text-white">以管理员身份进入</a>
+              <a href="/login?mode=admin&next=%2Fcn%2Fops%2Fpush-people" className="rounded-lg border border-stone-300 bg-white px-3 py-2 font-bold">管理员登录</a>
+            </div>
+          </div>
+        ) : null}
+        {denied ? null : <>
         {error ? <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm font-bold text-red-700">{error}</div> : null}
 
         <section className="mt-6 overflow-x-auto rounded-lg border border-stone-200 bg-white" data-testid="push-owners">
@@ -152,10 +193,11 @@ export default function PushPeoplePage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button type="button" onClick={() => wecomAction('sync')} className="rounded-lg border border-stone-300 px-3 py-2 text-sm font-bold">同步客户数</button>
+              <button type="button" onClick={() => wecomAction('sync')} disabled={Boolean(wecomBusy)} className="rounded-lg border border-stone-300 px-3 py-2 text-sm font-bold disabled:opacity-60">{wecomBusy === 'sync' ? '同步中…' : '同步客户数'}</button>
               <button type="button" onClick={invite} disabled={inviting || !selected.size} data-testid="wecom-invite" className="rounded-lg bg-teal-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-40">{inviting ? '发送中…' : `邀请加企业微信${selected.size ? `（${selected.size}）` : ''}`}</button>
             </div>
           </div>
+          {wecomMsg ? <div data-testid="wecom-msg" className={`mx-4 mt-3 rounded-lg p-2 text-sm font-bold ${wecomMsg.ok ? 'bg-teal-50 text-teal-800' : 'bg-red-50 text-red-700'}`}>{wecomMsg.text}</div> : null}
           <div className="grid gap-4 p-4 md:grid-cols-[200px_1fr]">
             <div className="text-center">
               {wecom?.defaultQr ? (
@@ -166,7 +208,7 @@ export default function PushPeoplePage() {
                   <a href="/api/cn/ops/wecom/qr" className="mt-2 inline-block rounded-lg border border-teal-600 px-3 py-1.5 text-xs font-bold text-teal-800">下载二维码</a>
                 </>
               ) : (
-                <button type="button" onClick={() => wecomAction('default-qr')} className="mt-8 rounded-lg border border-teal-600 px-3 py-2 text-sm font-bold text-teal-800">生成默认二维码</button>
+                <button type="button" onClick={() => wecomAction('default-qr')} disabled={Boolean(wecomBusy) || !wecom} className="mt-8 rounded-lg border border-teal-600 px-3 py-2 text-sm font-bold text-teal-800 disabled:opacity-50">{wecomBusy === 'default-qr' ? '生成中…' : wecom ? '生成默认二维码' : '读取中…'}</button>
               )}
             </div>
             <div className="overflow-x-auto">
@@ -261,6 +303,7 @@ export default function PushPeoplePage() {
             </tbody>
           </table>
         </section>
+        </>}
       </div>
     </main>
   );
