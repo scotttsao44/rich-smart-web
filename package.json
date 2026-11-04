@@ -17,6 +17,7 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.100",
     "@neondatabase/serverless": "^0.9.0",
     "@province-city-china/data": "8.5.8",
     "@types/pg": "^8.11.6",

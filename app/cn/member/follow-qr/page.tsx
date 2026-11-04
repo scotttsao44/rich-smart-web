@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, QrCode } from 'lucide-react';
+import { ArrowLeft, Image as ImageIcon, QrCode } from 'lucide-react';
+
+// 推广长图可勾选文字块（与 lib/cn-referral-poster.ts POSTER_BLOCKS 对应）
+const POSTER_OPTIONS = [
+  { key: 'a', label: '加企业微信说明' },
+  { key: 'b', label: '7 项回复菜单' },
+  { key: 'c', label: '店主／代理确认身份提示' },
+  { key: 'd', label: '生成专属码提示' },
+] as const;
 
 type Status = { eligible: boolean; reason?: string; generated: boolean; referralCode?: string; createdAt?: string };
 
@@ -12,6 +20,10 @@ export default function FollowQrPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [stamp, setStamp] = useState(0);
+  const [picked, setPicked] = useState<string[]>(POSTER_OPTIONS.map((o) => o.key));
+  const [posterBusy, setPosterBusy] = useState(false);
+  const [posterError, setPosterError] = useState('');
+  const [posterSrc, setPosterSrc] = useState('');
 
   const load = useCallback(async () => {
     const res = await fetch('/api/cn/wechat/follow-qr', { cache: 'no-store' });
@@ -33,6 +45,25 @@ export default function FollowQrPage() {
       setError('生成失败，请稍后再试');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const generatePoster = async () => {
+    setPosterBusy(true);
+    setPosterError('');
+    const blocks = POSTER_OPTIONS.map((o) => o.key).filter((k) => picked.includes(k)).join('');
+    try {
+      const res = await fetch('/api/cn/wechat/follow-qr/poster', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocks }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) setPosterError(data.error || '生成失败，请稍后再试');
+      else {
+        setPosterSrc(`/api/cn/wechat/follow-qr/poster?blocks=${blocks}&t=${Date.now()}`);
+        if (!status?.generated) await load();
+      }
+    } catch {
+      setPosterError('生成失败，请稍后再试');
+    } finally {
+      setPosterBusy(false);
     }
   };
 
@@ -96,6 +127,41 @@ export default function FollowQrPage() {
           {error ? <p className="mt-3 text-center text-sm font-semibold text-red-600">{error}</p> : null}
         </div>
       )}
+
+      {status?.eligible && !needLogin ? (
+        <div className="mt-4 rounded-xl border border-stone-200 bg-white p-5">
+          <h2 className="text-base font-black text-stone-900">我的推广长图</h2>
+          <p className="mt-1 text-sm leading-6 text-stone-500">企业微信、服务号、商城三个二维码都带您的推荐信息，朋友扫哪个都记在您名下。勾选要放进图里的文字：</p>
+          <div className="mt-3 space-y-2">
+            {POSTER_OPTIONS.map((o) => (
+              <label key={o.key} className="flex items-center gap-2 text-sm font-semibold text-stone-700">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-[#1f7a4c]"
+                  checked={picked.includes(o.key)}
+                  onChange={(e) => setPicked((prev) => (e.target.checked ? [...prev, o.key] : prev.filter((k) => k !== o.key)))}
+                />
+                {o.label}
+              </label>
+            ))}
+          </div>
+          <button type="button" disabled={posterBusy} onClick={generatePoster} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#1f7a4c] px-4 py-3.5 text-base font-bold text-white disabled:opacity-60">
+            <ImageIcon className="h-4 w-4" /> {posterBusy ? '生成中…' : '生成我的推广长图'}
+          </button>
+          {posterError ? <p className="mt-3 text-center text-sm font-semibold text-red-600">{posterError}</p> : null}
+          {posterSrc ? (
+            <>
+              <p className="mb-3 mt-5 text-center text-base font-black leading-6 text-stone-900">长按图片保存到相册</p>
+              {/* 同域 image/png inline，不包链接、无 download：微信内长按存图 */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={posterSrc} alt="我的推广长图" width={1080} draggable={false} className="mx-auto block w-full select-none rounded-xl border border-stone-100 bg-white" />
+              <p className="mt-3 text-center text-sm font-semibold leading-6 text-stone-600">
+                微信内请<strong className="text-stone-900">长按上方长图</strong>，选择「保存到相册」或转发给朋友。
+              </p>
+            </>
+          ) : null}
+        </div>
+      ) : null}
     </main>
   );
 }

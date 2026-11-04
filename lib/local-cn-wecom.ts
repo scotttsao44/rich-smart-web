@@ -1,14 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import path from 'path';
 import { listLocalCnMemberIdentities } from './local-cn-member-identities';
-import { findLocalCnUserById, listLocalCnUsers } from './local-cn-users';
+import { findLocalCnUserById, findLocalCnUserByReferralCode, listLocalCnUsers, referralOwnerForAttribution } from './local-cn-users';
 import { isSimulatedOpenid, windowStatus } from './local-cn-store-owners';
 import { addContactWay, findWecomUserIdByName, getExternalContact, getFollowUserList, listExternalContacts, wecomConfigured, type WecomFollowInfo } from './wecom-api';
 import { sendMpCustomImage, sendMpCustomText, uploadMpTempImage } from './wechat-mp-api';
 
 // 企业微信客户联系（自建应用「糙米健康助手」）
 // 资料（LOCAL_CN_DATA_DIR，不入 git）：
-//   wecom-config.json     「联系我」二维码：default（默认接待成员）、stores[门店 id]（预留：每店一码，state=s<门店>）、members[会员 id]（邀请用，state=m<会员>）
+//   wecom-config.json     「联系我」二维码：default（默认接待成员）、stores[门店 id]（预留：每店一码，state=s<门店>）、members[会员 id]（邀请用，state=m<会员>）、
+//                         referrers[会员 id]（推广长图用，state=推荐码前 30 字符；加好友时记推荐人，先到先得）
 //   wecom-customers.json  外部联系人（回调 add/del 与手动同步写入）、会员对应（已加企业微信）、邀请记录
 // 企业未认证：客户上限 100 人（WECOM_CUSTOMER_CAP 可调）。
 
@@ -24,6 +25,7 @@ type WecomConfig = {
   default: ContactWay | null;
   stores: Record<string, ContactWay>;
   members: Record<string, ContactWay>;
+  referrers: Record<string, ContactWay>;
 };
 
 export type WecomCustomer = {
@@ -34,6 +36,10 @@ export type WecomCustomer = {
   followUsers: Array<{ userid: string; state: string; createtime: number }>;
   memberId: number | null;
   matchedBy: 'state' | 'unionid' | null;
+  // 推荐人（推广长图「联系我」码 state=推荐码）：首次记录后不再覆盖
+  referrerCode?: string;
+  referrerMemberId?: number;
+  referredAt?: string;
   status: 'active' | 'deleted';
   addedAt: string;
   updatedAt: string;
@@ -72,8 +78,8 @@ function writeJson(name: string, value: unknown) {
 }
 
 export function readWecomConfig(): WecomConfig {
-  const c = readJson<WecomConfig>('wecom-config.json', { schemaVersion: 1, defaultUserId: '', default: null, stores: {}, members: {} });
-  return { schemaVersion: 1, defaultUserId: c.defaultUserId || '', default: c.default || null, stores: c.stores || {}, members: c.members || {} };
+  const c = readJson<WecomConfig>('wecom-config.json', { schemaVersion: 1, defaultUserId: '', default: null, stores: {}, members: {}, referrers: {} });
+  return { schemaVersion: 1, defaultUserId: c.defaultUserId || '', default: c.default || null, stores: c.stores || {}, members: c.members || {}, referrers: c.referrers || {} };
 }
 
 function writeWecomConfig(c: WecomConfig) {
@@ -149,6 +155,31 @@ export async function ensureMemberContactWay(memberId: number) {
   return way;
 }
 
+// 推广长图：该会员（推荐人）专属「联系我」码，state=推荐码（≤30 字符），接待成员同默认（曹哲魁）
+export async function ensureReferrerContactWay(memberId: number, referralCode: string) {
+  const state = String(referralCode || '').trim().toUpperCase().slice(0, 30);
+  if (!state) throw new Error('缺少推荐码');
+  const existing = readWecomConfig().referrers[String(memberId)];
+  if (existing?.qrCode && existing.state === state) return existing;
+  if (!wecomConfigured()) throw new Error('企业微信未配置');
+  const userid = await defaultUserId();
+  if (!userid) throw new Error('找不到默认接待成员（曹哲魁）的 userid');
+  const way = await createWay(userid, state, `推广${memberId}`.slice(0, 30));
+  const c = readWecomConfig();
+  c.referrers[String(memberId)] = way;
+  writeWecomConfig(c);
+  return way;
+}
+
+// state 为推荐码（推广长图「联系我」码）时返回推荐人；须仍有推荐资格
+function referrerFromState(state: string) {
+  const code = String(state || '').trim();
+  if (!code || code === 'default' || /^m\d+$/.test(code) || /^s/.test(code)) return null;
+  const owner = findLocalCnUserByReferralCode(code);
+  if (!owner || !referralOwnerForAttribution(owner.id)) return null;
+  return owner;
+}
+
 function patchMemberWay(memberId: number, patch: Partial<ContactWay>) {
   const c = readWecomConfig();
   const way = c.members[String(memberId)];
@@ -194,6 +225,9 @@ function upsertCustomer(s: CustomerState, externalUserId: string, contact: { nam
     addedAt: prev?.addedAt || (first ? new Date(first * 1000).toISOString() : now),
     updatedAt: now,
     deletedAt: followUsers.length ? undefined : now,
+    referrerCode: prev?.referrerCode,
+    referrerMemberId: prev?.referrerMemberId,
+    referredAt: prev?.referredAt,
   };
   return s.customers[externalUserId];
 }
@@ -212,6 +246,15 @@ export async function handleExternalContactChange(msg: Record<string, string>) {
     else {
       // 取不到详情时先用事件里的 state 记录
       customer = upsertCustomer(s, externalUserId, null, [{ userid, state: String(msg.State || ''), createtime: Number(msg.CreateTime || 0) }]);
+    }
+    // 推荐人：add_external_contact 的 State（推荐码）首次记录，先到先得，不覆盖
+    if (changeType === 'add_external_contact' && !customer.referrerCode) {
+      const owner = referrerFromState(String(msg.State || ''));
+      if (owner) {
+        customer.referrerCode = owner.referralCode;
+        customer.referrerMemberId = owner.id;
+        customer.referredAt = new Date().toISOString();
+      }
     }
     s.events.push({ at: new Date().toISOString(), changeType, externalUserId, userid, state: String(msg.State || ''), memberId: customer.memberId });
     writeCustomers(s);

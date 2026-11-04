@@ -3,6 +3,8 @@ const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || '.next',
   output: 'standalone',
   experimental: {
+    // 推广长图服务端渲染（原生 .node，不打包）
+    serverComponentsExternalPackages: ['@napi-rs/canvas'],
     outputFileTracingExcludes: {
       '**/*': ['./.data/**/*'],
     },
