@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Download, QrCode } from 'lucide-react';
+import { ArrowLeft, QrCode } from 'lucide-react';
 
 type Status = { eligible: boolean; reason?: string; generated: boolean; referralCode?: string; createdAt?: string };
 
@@ -36,6 +36,7 @@ export default function FollowQrPage() {
     }
   };
 
+  // 同域 image/png（inline），勿用 <a download>：微信内会变成「接收文件」无法存相册
   const imgSrc = `/api/cn/wechat/follow-qr?format=png${stamp ? `&t=${stamp}` : ''}`;
 
   return (
@@ -61,11 +62,30 @@ export default function FollowQrPage() {
         <div className="mt-6 rounded-xl border border-stone-200 bg-white p-5">
           {status.generated ? (
             <>
+              <p className="mb-3 text-center text-base font-black leading-6 text-stone-900">长按图片保存到相册</p>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={imgSrc} alt="我的专属关注码" className="mx-auto aspect-square w-full max-w-xs rounded-lg border border-stone-100" />
-              <p className="mt-3 text-center text-xs text-stone-500">微信内长按图片可保存或转发给朋友</p>
-              <a href={imgSrc} download={`专属关注码-${status.referralCode || ''}.png`} className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-[#07C160] px-4 py-3 text-base font-bold text-white">
-                <Download className="h-4 w-4" /> 下载二维码图片
+              <img
+                src={imgSrc}
+                alt="我的专属关注码"
+                width={600}
+                height={600}
+                draggable={false}
+                className="mx-auto block aspect-square w-full max-w-sm select-none rounded-xl border border-stone-100 bg-white object-contain p-2"
+              />
+              <p className="mt-3 text-center text-sm font-semibold leading-6 text-stone-600">
+                微信内请<strong className="text-stone-900">长按上方二维码</strong>，选择「保存到相册」或转发给朋友。
+              </p>
+              <p className="mt-1 text-center text-xs text-stone-400">
+                不要点页面外的「接收文件」；那是下载附件，无法存成图片。
+              </p>
+              {/* 非微信浏览器兜底：新窗口打开图片（无 download / attachment），不包在 img 外层 */}
+              <a
+                href={imgSrc}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 block text-center text-xs font-bold text-stone-400 underline-offset-2 hover:text-stone-600 hover:underline"
+              >
+                电脑端可点此在新窗口打开图片
               </a>
             </>
           ) : (
