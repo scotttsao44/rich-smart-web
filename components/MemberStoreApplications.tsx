@@ -3,12 +3,14 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowRight, Building2, Check, ClipboardList, Plus, Trash2, UserPlus } from 'lucide-react';
+import StorePrepayPanel, { formatCnDate } from '@/components/StorePrepayPanel';
 
 type DirectoryMember = { id: number; name: string; email: string; phone: string };
 type Participant = { userId: number; name?: string; role: string; shareRate: number; depositContribution: number; confirmed?: boolean };
 type Application = {
   id: string; name: string; address: string; depositAmount: number; applicantId: number; status: string; equipmentNo: string;
   applicationDocument?: string; applicationDocumentName?: string;
+  prepay?: { tier: string; amountYuan: number; uses: number; status: 'unpaid' | 'paid'; orderNo: string; paidAt?: string; expiresAt?: string; creditStatus?: string };
   equipmentShareRate: number; participants: Participant[]; reviewNote: string;
   transactions?: Array<{ id: string; amount: number; occurredAt: string; shares: Array<{ userId: number; amount: number }> }>;
 };
@@ -71,7 +73,7 @@ export default function MemberStoreApplications({ userId }: { userId: number }) 
         <div className="flex flex-col gap-3 rounded-lg border border-teal-100 bg-white p-4 md:flex-row md:items-center md:justify-between">
           <div>
             <div className="font-black text-stone-950">申请前先看阿富同学门店导览</div>
-            <p className="mt-1 text-sm font-semibold leading-6 text-stone-600">一般会员不直接填写内部申请表。请先了解产品、门店服务流程与非医疗说明，再由客服协助确认合作条件并建单。</p>
+            <p className="mt-1 text-sm font-semibold leading-6 text-stone-600">先了解产品、门店服务流程与非医疗说明；可在导览页在线提交申请并预购次数（次卡），也可由客服协助建单。</p>
           </div>
           <Link href="/cn/member/store-application" className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-stone-950 px-4 py-3 text-sm font-bold text-white">前往导览 <ArrowRight className="h-4 w-4" /></Link>
         </div>
@@ -88,8 +90,9 @@ export default function MemberStoreApplications({ userId }: { userId: number }) 
           const partnerTotal = application.participants.reduce((sum, person) => sum + Number(shares[application.id]?.[person.userId] ?? person.shareRate), 0);
           return <article key={application.id} className="rounded-lg border border-stone-200 p-4">
             <div className="flex items-start justify-between gap-3"><div><h3 className="font-black text-stone-950">{application.name}</h3><p className="mt-1 text-sm text-stone-500">{application.address}</p></div><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">{statusLabels[application.status] || application.status}</span></div>
-            <div className="mt-4 grid grid-cols-2 gap-2 text-sm"><div>设备预付金：<b>¥{application.depositAmount.toLocaleString()}</b></div><div>设备方比例：<b>{application.equipmentShareRate}%</b></div><div>设备：<b>{application.equipmentNo || '尚未配置'}</b></div><div>我的收益：<b>¥{myEquipmentIncome.toFixed(2)}</b></div></div>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-sm">{application.prepay ? <div>预购次数（次卡）：<b>{application.prepay.tier} 档 · {application.prepay.uses} 次 · {application.prepay.status === 'paid' ? `已付款${application.prepay.expiresAt ? `，有效期至 ${formatCnDate(application.prepay.expiresAt)}` : ''}` : '待付款'}</b>{application.prepay.status === 'paid' ? <div className="text-xs text-stone-500">{application.prepay.creditStatus === 'credited' ? '次数已灌入设备' : '设备绑定后灌入次数'}</div> : null}</div> : <div>设备预付金：<b>¥{application.depositAmount.toLocaleString()}</b></div>}<div>设备方比例：<b>{application.equipmentShareRate}%</b></div><div>设备：<b>{application.equipmentNo || '尚未配置'}</b></div><div>我的收益：<b>¥{myEquipmentIncome.toFixed(2)}</b></div></div>
             {application.reviewNote ? <div className="mt-3 rounded-lg bg-stone-50 p-3 text-sm">审核备注：{application.reviewNote}</div> : null}
+            {canManage && application.prepay && application.prepay.status !== 'paid' && ['pending_review', 'revision_required', 'pending_deposit'].includes(application.status) ? <div className="mt-3"><StorePrepayPanel compact applicationId={application.id} initialTier={application.prepay.tier} returnPath="/cn/member/store-application" onPaid={() => { void load(); }} /></div> : null}
 
             {['pending_partner_split', 'active'].includes(application.status) ? <div className="mt-4 border-t border-stone-100 pt-4">
               <div className="mb-3 flex items-center justify-between"><div className="font-black">合伙成员分润</div><div className="text-xs font-bold text-stone-500">可分配 {100 - application.equipmentShareRate}% · 当前 {partnerTotal}%</div></div>
@@ -113,7 +116,7 @@ export default function MemberStoreApplications({ userId }: { userId: number }) 
             {application.status === 'active' ? <div className="mt-4 flex gap-2"><input className="input-field" type="number" min="0.01" step="0.01" placeholder="本次设备使用费" value={usageAmounts[application.id] || ''} onChange={(event) => setUsageAmounts({ ...usageAmounts, [application.id]: Number(event.target.value) })} /><button type="button" onClick={() => patch({ id: application.id, action: 'record_usage', amount: Number(usageAmounts[application.id] || 0) }, '设备使用费已登记并按当前比例分润')} className="shrink-0 rounded-lg bg-stone-950 px-4 py-2 text-sm font-bold text-white">登记并分润</button></div> : null}
           </article>;
         }) : <div className="col-span-full rounded-lg bg-stone-50 p-6 text-center text-sm font-semibold text-stone-500">
-          <div>目前没有门店申请记录。请先阅读导览并联系糙米健康服务，客服确认后会协助建立申请。</div>
+          <div>目前没有门店申请记录。可阅读导览后在线提交申请，或联系糙米健康服务协助建立申请。</div>
           <Link href="/cn/member/store-application" className="mt-3 inline-flex items-center justify-center gap-2 rounded-lg bg-teal-700 px-4 py-2 text-white">了解阿富同学门店申请 <ArrowRight className="h-4 w-4" /></Link>
         </div>}
       </div>

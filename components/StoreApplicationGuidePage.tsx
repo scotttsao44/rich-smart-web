@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { storeOperatingLoop, storeRevenueCards } from '@/lib/cn-mvp';
+import StoreApplicationOnlineForm from '@/components/StoreApplicationOnlineForm';
 
 type Locale = 'zh-CN' | 'zh-TW';
 
@@ -57,9 +58,9 @@ const copy = {
     wechat: '微信公众号',
     fit: ['养生体验馆、健康管理门店、社区服务点', '有稳定接待人员与线下服务时段的合作伙伴', '能持续跟进会员记录、复购与商品推荐的门店团队'],
     canDo: ['接待客人到店体验阿富同学设备', '协助会员建立健康管理记录与服务回访', '依系统资料做商品或服务包推荐', '查看申请进度、设备配置与门店相关结算记录'],
-    steps: ['阅读本页并确认门店模式', '准备门店资料、负责人联系方式与服务规划', '通过微信公众号或电话联系糙米健康服务', '客服确认资格、合作条件与设备安排后协助建单', '平台审核后再进入设备配置、试营运与正式服务'],
+    steps: ['阅读本页并确认门店模式', '准备门店资料、负责人联系方式与服务规划', '在本页在线提交申请并选择预购次数（次卡），可直接微信付款；也可联系糙米健康服务协助', '平台审核资格、合作条件与设备安排', '设备绑定后灌入所购次数，进入试营运与正式服务'],
     prepare: ['门店名称、地址与现场照片或简介', '负责人姓名、手机与微信联系方式', '可接待时段、服务人员与会员维护方式', '预计合作区域、客群来源与商品推荐场景'],
-    notices: ['阿富同学相关资料仅用于健康管理与商品推荐参考，不作为诊断、治疗或疗效承诺。', '设备、合作费用、资格要求与服务区域以客服最终确认为准。', '一般会员不会直接填写内部申请表；客服会在确认资料后协助建立申请记录。'],
+    notices: ['阿富同学相关资料仅用于健康管理与商品推荐参考，不作为诊断、治疗或疗效承诺。', '设备、合作费用、资格要求与服务区域以客服最终确认为准。', '可在本页在线提交申请并预购次数（次卡）；如需退款或有疑问，请联系客服转人工处理。'],
   },
   'zh-TW': {
     back: '返回會員中心',
@@ -197,6 +198,12 @@ export default function StoreApplicationGuidePage({ locale }: { locale: Locale }
                 <MessageCircle className="h-5 w-5" />
                 {text.primary}
               </button>
+              {!isTraditional ? (
+                <a href="#online-apply" className="inline-flex min-h-12 items-center gap-2 rounded-lg border border-teal-700 bg-white px-5 py-3 font-black text-teal-800">
+                  <ClipboardCheck className="h-5 w-5" />
+                  在线申请并付款
+                </a>
+              ) : null}
               <a href="#product-intro" className="inline-flex min-h-12 items-center gap-2 rounded-lg border border-stone-300 bg-white px-5 py-3 font-black text-stone-800">
                 <ChevronRight className="h-5 w-5" />
                 {text.introTitle}
@@ -244,6 +251,12 @@ export default function StoreApplicationGuidePage({ locale }: { locale: Locale }
             </article>
           ))}
         </section>
+
+        {!isTraditional ? (
+          <section id="online-apply" className="scroll-mt-4">
+            <StoreApplicationOnlineForm />
+          </section>
+        ) : null}
 
         <section className="rounded-lg border border-amber-200 bg-amber-50 p-5 sm:p-6">
           <div className="flex items-center gap-2">

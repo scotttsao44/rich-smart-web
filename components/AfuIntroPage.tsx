@@ -128,8 +128,7 @@ export default function AfuIntroPage({ refCode = '' }: { refCode?: string }) {
             {KEFU_TIERS.map((tier) => (
               <article key={tier.id} className="rounded-lg border-2 border-teal-100 bg-white p-5">
                 <div className="text-sm font-black text-teal-700">{tier.id} 档</div>
-                <div className="mt-2 text-3xl font-black tabular-nums text-stone-950">¥{tier.amountYuan.toLocaleString('en-US')}</div>
-                <div className="mt-1 text-xl font-black tabular-nums text-stone-800">{tier.uses}<span className="ml-1 text-sm">{t.tierUnit}</span></div>
+                <div className="mt-2 text-xl font-black tabular-nums text-stone-800">{tier.uses}<span className="ml-1 text-sm">{t.tierUnit}</span></div>
                 <div className="mt-3 text-sm font-bold text-stone-500">{t.tierValidity}</div>
               </article>
             ))}

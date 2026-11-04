@@ -22,6 +22,23 @@ export type StoreParticipant = {
   confirmed: boolean;
 };
 
+// 预购次数（次卡）线上付款：付款后只记待灌入次数；后台绑定设备后，由管理员确认灌入（目前无机器端自动加次接口）
+export type StorePrepayCreditStatus = 'awaiting_equipment' | 'pending_credit' | 'credited';
+export type StorePrepay = {
+  tier: string;
+  amountYuan: number;
+  uses: number;
+  status: 'unpaid' | 'paid';
+  orderNo: string;
+  transactionId?: string;
+  paidAt?: string;
+  expiresAt?: string;
+  creditStatus?: StorePrepayCreditStatus;
+  creditEquipmentNo?: string;
+  creditedAt?: string;
+  creditedBy?: number;
+};
+
 export type StoreApplication = {
   id: string;
   name: string;
@@ -45,6 +62,9 @@ export type StoreApplication = {
     splitVersion: string;
     shares: Array<{ userId: number; name: string; role: string; rate: number; amount: number }>;
   }>;
+  prepay?: StorePrepay;
+  referrerMemberId?: number | null;
+  referralSource?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -108,6 +128,8 @@ export function createStoreApplication(user: SessionUser, input: Record<string, 
   const depositAmount = Number(input.depositAmount ?? legacyApplicant?.depositContribution ?? 0);
   if (!Number.isFinite(depositAmount) || depositAmount <= 0) throw new Error('设备预付金必须大于 0');
   const now = new Date().toISOString();
+  const attribution = (input.attribution || {}) as { referrerMemberId?: unknown; referralSource?: unknown };
+  const referrerMemberId = Number(attribution.referrerMemberId) > 0 ? Number(attribution.referrerMemberId) : null;
   const row: StoreApplication = {
     id: `SA${Date.now()}`,
     name: String(input.name).trim(),
@@ -125,6 +147,7 @@ export function createStoreApplication(user: SessionUser, input: Record<string, 
     reviewNote: '',
     equipmentNo: '',
     transactions: [],
+    ...(referrerMemberId ? { referrerMemberId, referralSource: String(attribution.referralSource || '').slice(0, 60) } : {}),
     createdAt: now,
     updatedAt: now,
   };
@@ -216,7 +239,8 @@ export function updateStoreApplication(user: SessionUser, id: string, action: st
       const equipmentShareRate = Number(input.equipmentShareRate);
       if (!Number.isFinite(equipmentShareRate) || equipmentShareRate < 0 || equipmentShareRate > 100) throw new Error('请核定 0% 至 100% 的设备方比例');
       row.equipmentShareRate = equipmentShareRate;
-      row.status = 'pending_deposit';
+      // 已线上付清预购次数（次卡）的申请，审核通过后直接进入设备配置
+      row.status = row.prepay?.status === 'paid' ? 'pending_equipment' : 'pending_deposit';
     } else if (action === 'revision') row.status = 'revision_required';
     else if (action === 'reject') row.status = 'rejected';
     else if (action === 'confirm_deposit') {
@@ -228,6 +252,13 @@ export function updateStoreApplication(user: SessionUser, id: string, action: st
       if (!equipmentNo) throw new Error('请填写设备编号');
       row.equipmentNo = equipmentNo;
       row.status = 'pending_partner_split';
+      if (row.prepay?.status === 'paid' && row.prepay.creditStatus !== 'credited') {
+        row.prepay = { ...row.prepay, creditStatus: 'pending_credit', creditEquipmentNo: equipmentNo };
+      }
+    } else if (action === 'mark_credited') {
+      if (row.prepay?.status !== 'paid') throw new Error('该申请尚未付款');
+      if (!row.equipmentNo) throw new Error('请先绑定设备，再确认灌入次数');
+      row.prepay = { ...row.prepay, creditStatus: 'credited', creditEquipmentNo: row.equipmentNo, creditedAt: new Date().toISOString(), creditedBy: user.id };
     } else throw new Error('不支持的操作');
     row.reviewNote = String(input.reviewNote || row.reviewNote || '').trim();
   }
@@ -236,6 +267,42 @@ export function updateStoreApplication(user: SessionUser, id: string, action: st
   rows[index] = row;
   writeAll(rows);
   return row;
+}
+
+export function getStoreApplicationById(id: string) {
+  return readAll().find((row) => row.id === id) || null;
+}
+
+/** 选定档位、发起付款时记录（未付款）；已付款的申请不再覆盖。 */
+export function setStoreApplicationPrepayPending(id: string, prepay: { tier: string; amountYuan: number; uses: number; orderNo: string }) {
+  const rows = readAll();
+  const index = rows.findIndex((row) => row.id === id);
+  if (index < 0) return null;
+  const row = rows[index];
+  if (row.prepay?.status === 'paid') return row;
+  row.prepay = { ...prepay, status: 'unpaid' };
+  row.depositAmount = prepay.amountYuan;
+  row.updatedAt = new Date().toISOString();
+  rows[index] = row;
+  writeAll(rows);
+  return row;
+}
+
+/** 微信支付确认到账后记录：档位、次数、有效期（付款日起 3 个月）；幂等。 */
+export function markStoreApplicationPrepayPaid(id: string, paid: { tier: string; amountYuan: number; uses: number; orderNo: string; transactionId: string; paidAt: string; expiresAt: string }) {
+  const rows = readAll();
+  const index = rows.findIndex((row) => row.id === id);
+  if (index < 0) return null;
+  const row = rows[index];
+  if (row.prepay?.status === 'paid') return { row, changed: false };
+  const creditStatus: StorePrepayCreditStatus = row.equipmentNo ? 'pending_credit' : 'awaiting_equipment';
+  row.prepay = { ...paid, status: 'paid', creditStatus, ...(row.equipmentNo ? { creditEquipmentNo: row.equipmentNo } : {}) };
+  row.depositAmount = paid.amountYuan;
+  if (row.status === 'pending_deposit') row.status = 'pending_equipment';
+  row.updatedAt = new Date().toISOString();
+  rows[index] = row;
+  writeAll(rows);
+  return { row, changed: true };
 }
 
 // 店主通知用：已开通（active）的门店申请，只读
