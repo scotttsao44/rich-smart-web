@@ -143,10 +143,21 @@ export function lastInteractionAt(openid: string) {
   return times.length ? new Date(Math.max(...times)).toISOString() : null;
 }
 
+// 微信现行规则：只有「用户主动发消息」给 48 小时（5 条）客服消息额度；
+// 关注、扫码、点菜单只给 1 分钟 3 条，后台操作记录（如「标记已处理」）不算互动。
+export function kefuWindowStartAt(openid: string) {
+  const conv = openid ? getKefuConversation(openid) : null;
+  if (!conv) return null;
+  const times = [conv.lastUserAt, ...conv.messages.filter((m) => m.role === 'user').map((m) => m.at)]
+    .map((v) => Date.parse(String(v || '')))
+    .filter(Number.isFinite);
+  return times.length ? new Date(Math.max(...times)).toISOString() : null;
+}
+
 export function windowStatus(openid: string) {
-  const last = lastInteractionAt(openid);
+  const last = kefuWindowStartAt(openid);
   if (!openid) return { open: false, lastInteractionAt: null, hoursLeft: 0, label: '未绑定' };
-  if (!last) return { open: false, lastInteractionAt: null, hoursLeft: 0, label: '无互动记录（客服消息发不出）' };
+  if (!last) return { open: false, lastInteractionAt: null, hoursLeft: 0, label: '未主动发过消息（客服消息发不出）' };
   const left = Date.parse(last) + WINDOW_MS - Date.now();
   return left > 0
     ? { open: true, lastInteractionAt: last, hoursLeft: Math.floor(left / 3600000), label: `窗口内，约剩 ${Math.max(1, Math.floor(left / 3600000))} 小时` }

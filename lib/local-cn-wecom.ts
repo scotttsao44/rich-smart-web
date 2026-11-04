@@ -338,8 +338,8 @@ export async function inviteMembersToWecom(memberIds: number[], byMemberId?: num
     }
     const t = await sendMpCustomText(openid, inviteText());
     if (!t.ok) {
-      record('failed', 'wechat_kefu', String(t.errcode));
       const unreachable = String(t.errcode) === '45015';
+      record(unreachable ? 'unreachable' : 'failed', 'wechat_kefu', String(t.errcode));
       results.push({ memberId, name, status: unreachable ? 'unreachable' : 'failed', label: unreachable ? '无法触达（超过48小时）' : `发送失败（${t.errcode}）`, qrCode: way.qrCode, errcode: String(t.errcode) });
       continue;
     }
