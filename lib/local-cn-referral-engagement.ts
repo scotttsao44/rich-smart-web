@@ -288,7 +288,7 @@ function validReferralOrders(referralCode: string) {
   ));
 }
 
-function confirmedRecentIncome(userId: number, days = 30) {
+export function confirmedRecentIncome(userId: number, days = 30) {
   const now = Date.now();
   const cutoff = now - days * 24 * 60 * 60 * 1000;
   const state = commerceSnapshot();
@@ -611,3 +611,28 @@ export const referralEngagementTestHooks = {
   BATCH_LIMIT,
   COOLDOWN_DAYS,
 };
+
+// 分层唤醒排程用：全体已绑定服务号的会员，按最近活跃时间分层（与推荐人页面同一套规则）
+export function listMemberTiersForPush(extraLastSeen: (openid: string) => string | null = () => null) {
+  const state = readState();
+  const orders = commerceSnapshot().orders.filter((order) => isPaidEngagementOrder(order));
+  return listLocalCnUsers()
+    .filter((member) => member.id > 0 && Boolean(member.wechatOfficialOpenId))
+    .map((member) => {
+      const tracked = state.memberActivities.find((row) => row.userId === member.id) || null;
+      const memberOrders = orders.filter((order) => order.userId === member.id);
+      const dates = [
+        tracked?.lastSeenAt,
+        member.onboardingCompletedAt,
+        member.profileAuthorizedAt,
+        member.phoneVerifiedAt,
+        member.createdAt,
+        ...memberOrders.map((order) => order.paidAt || order.updatedAt),
+        extraLastSeen(String(member.wechatOfficialOpenId)),
+      ].filter(Boolean).map((value) => new Date(String(value)).getTime()).filter(Number.isFinite);
+      const lastActivityAt = dates.length ? new Date(Math.max(...dates)).toISOString() : null;
+      const level = memberActivityLevel({ lastActivityAt, joinedAt: member.createdAt, orderCount: memberOrders.length, appointmentKey: 'none', hasTrackedActivity: Boolean(tracked) });
+      const lastReminder = state.reminders.filter((row) => row.recipientId === member.id && row.status === 'sent').map((row) => row.sentAt).sort().pop() || null;
+      return { member, openid: String(member.wechatOfficialOpenId), lastActivityAt, tier: level.key, tierLabel: level.label, lastReminderAt: lastReminder };
+    });
+}

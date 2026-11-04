@@ -103,6 +103,8 @@ import {
 import { isSimulatedOpenid, notifyKefuHandoff } from '@/lib/wechat-kefu-notify';
 import { sendMpCustomText } from '@/lib/wechat-mp-api';
 import { continueStoreApply, parseStoreApplyScene, startStoreApply, storeApplyHandoffDetail } from '@/lib/wechat-kefu-store-apply';
+import { ackPendingByOpenid, handleOwnerBindScan, notifyStoreOwnersForCity, parseOwnerBindScene } from '@/lib/local-cn-store-owners';
+import { setPushOptOut } from '@/lib/cn-push-schedule';
 
 // 服务号 AI 客服主流程：规则优先 → 症状只给权威科普链接 → 千问回答 → 不确定就转人工。
 
@@ -218,6 +220,12 @@ function notifyLead(openid: string, simple: string, text: string, reason: string
   appendKefuMessage(openid, { role: 'system', type: 'lead_notify', tag: key, text: `已通知客服：${reason}（${detail}）` });
   const fresh = getKefuConversation(openid);
   if (fresh) notifyKefuHandoff(fresh, reason, text, { force: true, detail }).catch(() => console.warn('[wechat-kefu] lead notify error'));
+  // 按城市通知该城市所有体验点／门店的店主（曹总已由上面的转人工通知收到，这里不重复抄送）；只在客人留了手机号时通知店主
+  if (city && phone) {
+    const test = String(process.env.KEFU_NOTIFY_OPENIDS || '').split(',').map((x) => x.trim()).includes(openid);
+    notifyStoreOwnersForCity(city, { type: 'lead', phone, source: `服务号客服（${reason}）`, test, simulated: isSimulatedOpenid(openid) }, { copyToAdmins: false })
+      .catch(() => console.warn('[wechat-kefu] store owner notify error'));
+  }
 }
 
 const RE_YES = /^(是|是的|对|对的|可以|好|好的|嗯|嗯嗯|没错|行|ok|用这个|就这个|就用这个|还是这个)$/i;
@@ -789,7 +797,13 @@ async function processMessage(msg: Record<string, string>, deadline: number): Pr
       appendKefuMessage(openid, { role: 'system', type: 'event', text: `关注${msg.EventKey ? `（来源：${String(msg.EventKey).replace(/^qrscene_/, '')}）` : ''}` });
       // 门店申请页的带参二维码：不发通用欢迎语，直接发门店申请问题模板（客服消息）
       if (parseStoreApplyScene(msg.EventKey)) return startStoreApply(openid, String(msg.EventKey), 'subscribe', deadline);
+      if (parseOwnerBindScene(msg.EventKey)) return passive(openid, handleOwnerBindScan(openid, String(msg.EventKey)) || KEFU_WELCOME, 'owner_bind');
       return passive(openid, KEFU_WELCOME, 'welcome');
+    }
+    if (event === 'scan' && parseOwnerBindScene(msg.EventKey)) {
+      updateKefuConversation(openid, (c) => { c.subscribed = true; });
+      appendKefuMessage(openid, { role: 'system', type: 'event', text: '扫码绑定店主通知' });
+      return passive(openid, handleOwnerBindScan(openid, String(msg.EventKey)) || '已收到。', 'owner_bind');
     }
     if (event === 'scan' && parseStoreApplyScene(msg.EventKey)) {
       updateKefuConversation(openid, (c) => {
@@ -814,6 +828,16 @@ async function processMessage(msg: Record<string, string>, deadline: number): Pr
 
   if (text) {
     appendKefuMessage(openid, { role: 'user', type, text: text.slice(0, 2000), msgKey: msg.MsgId }, linkMember);
+    const short = text.trim();
+    // 店主回复「收到」确认通知；回复「退订」停止分层唤醒推送
+    if (/^(收到|收到了|已收到|1)$/.test(short)) {
+      const acked = ackPendingByOpenid(openid);
+      if (acked >= 0) return passive(openid, acked > 0 ? '已确认收到，谢谢！' : '收到，明天继续为你推送简报。', 'owner_ack');
+    }
+    if (/^(退订|TD|td)$/.test(short)) {
+      setPushOptOut(openid, true);
+      return passive(openid, '已为你停止此类提醒。需要帮助时直接留言即可。', 'push_optout');
+    }
     return handleText(openid, text, deadline);
   }
 

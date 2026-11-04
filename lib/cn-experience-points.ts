@@ -12,6 +12,7 @@ export type ExperiencePoint = {
   publicAddress: string; // 经营地址（品牌前页显示）
   brandSlug?: string; // 关联品牌前页
   source: string;
+  ownerMemberIds?: number[]; // 店主／体验点负责人会员 ID（后台「需要推送的人」设置，存 cn-store-owners.json，见 lib/local-cn-store-owners.ts）
 };
 
 export const EXPERIENCE_POINTS: ExperiencePoint[] = [

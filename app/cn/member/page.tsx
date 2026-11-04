@@ -30,6 +30,7 @@ import {
 import { useAuth } from '@/app/providers';
 import MemberStoreApplications from '@/components/MemberStoreApplications';
 import ReferralQrCode from '@/components/ReferralQrCode';
+import StoreOwnerNotifyCard from '@/components/StoreOwnerNotifyCard';
 import ChinaMobileTabBar from '@/components/ChinaMobileTabBar';
 
 type WorkspaceRow = Record<string, any>;
@@ -527,6 +528,8 @@ export default function ChinaMemberDashboardPage() {
             {nicknameMessage ? <div className="mt-2 text-sm font-bold text-teal-800">{nicknameMessage}</div> : null}
           </section>
         ) : null}
+
+        <StoreOwnerNotifyCard />
 
         <section className="mt-6">
           <h2 className="text-lg font-black text-stone-950">经营功能</h2>

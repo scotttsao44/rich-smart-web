@@ -237,3 +237,8 @@ export function updateStoreApplication(user: SessionUser, id: string, action: st
   writeAll(rows);
   return row;
 }
+
+// 店主通知用：已开通（active）的门店申请，只读
+export function listActiveStoreApplicationsForNotify() {
+  return readAll().filter((row) => row.status === 'active');
+}
