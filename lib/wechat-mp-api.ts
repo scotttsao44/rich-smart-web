@@ -92,6 +92,18 @@ export async function createMpTempQr(sceneStr: string, expireSeconds: number) {
   return { ok: true as const, url, expireSeconds: Number(r.data?.expire_seconds || expireSeconds) };
 }
 
+// 永久带参二维码（QR_LIMIT_STR_SCENE，scene_str ≤ 64 字符，永久有效，总量上限 10 万）；返回 ticket 与二维码内容 URL
+export async function createMpLimitQr(sceneStr: string) {
+  const r = await postWithToken('/cgi-bin/qrcode/create', {
+    action_name: 'QR_LIMIT_STR_SCENE',
+    action_info: { scene: { scene_str: sceneStr.slice(0, 64) } },
+  });
+  const url = String(r.data?.url || '');
+  const ticket = String(r.data?.ticket || '');
+  if (!r.ok || !ticket || !/^https?:\/\/weixin\.qq\.com\/q\//.test(url)) return { ok: false as const, errcode: r.errcode ?? 'no_url' };
+  return { ok: true as const, url, ticket };
+}
+
 // 用户是否关注服务号：true / false；查不到（openid 不属于本服务号、接口失败）返回 null
 export async function getMpUserSubscribed(openid: string): Promise<boolean | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {

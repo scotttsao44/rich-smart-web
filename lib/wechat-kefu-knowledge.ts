@@ -77,6 +77,7 @@ export const KEFU_WELCOME = [
   '您好，欢迎关注「糙米量子」！',
   '我是 AI 客服，可以为您介绍阿富同学设备、门店合作与预购次数（次卡）。',
   `需要真人客服请回复「人工」，或致电 ${KEFU_PHONE}。`,
+  '转发前请先生成您的专属二维码，再分享给朋友：https://rich-smart.com.cn/cn/member/follow-qr',
 ].join('\n');
 
 export const KEFU_HANDOFF_REPLY = `这个问题我先帮您记下，已转给客服同事，会尽快回复您。着急的话也可以致电 ${KEFU_PHONE}。`;

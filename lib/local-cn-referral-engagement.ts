@@ -1,3 +1,4 @@
+import { FOLLOW_QR_HINT } from '@/lib/local-cn-follow-qr';
 import { createHash, randomUUID } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import path from 'path';
@@ -146,7 +147,7 @@ async function deliverWakeupWechat(openid: string, input: { senderName: string; 
   }
   const directList = String(process.env.KEFU_NOTIFY_OPENIDS || '').split(',').map((item) => item.trim()).filter(Boolean);
   const testTag = directList.includes(openid) ? '【测试】' : '';
-  const text = `${testTag}${input.senderName} 通过富智慧给你发来${input.title}：\n${input.message}\n查看：${input.linkUrl}`;
+  const text = `${testTag}${input.senderName} 通过富智慧给你发来${input.title}：\n${input.message}\n查看：${input.linkUrl}\n${FOLLOW_QR_HINT}`;
   const textResult = await sendMpCustomText(openid, text);
   steps.push({ type: 'kefu_text', errcode: textResult.ok ? '0' : String(textResult.errcode) });
   if (textResult.ok) {

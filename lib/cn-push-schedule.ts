@@ -1,3 +1,4 @@
+import { FOLLOW_QR_HINT } from './local-cn-follow-qr';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import path from 'path';
 import { confirmedRecentIncome, listMemberTiersForPush, readWakeupAssets } from './local-cn-referral-engagement';
@@ -119,9 +120,9 @@ function wakeText(member: LocalCnUser, tier: Exclude<Tier, 'owner'>, tag = '') {
   const assets = readWakeupAssets();
   const link = linkFor(member, assets.linkUrl);
   const name = callName(member);
-  if (tier === 'active') return `${tag}${name}，本周新内容：${assets.linkTitle}\n${link}`;
-  if (tier === 'sleeping') return `${tag}${name}，富智慧给你留了一份新内容：${assets.linkTitle}\n${link}\n不想再收到此类提醒，回复「退订」即可。`;
-  return `${tag}${name}，好久不见。最近有新内容：${assets.linkTitle}\n${link}\n想了解附近体验点，直接回复所在城市即可。`;
+  if (tier === 'active') return `${tag}${name}，本周新内容：${assets.linkTitle}\n${link}\n${FOLLOW_QR_HINT}`;
+  if (tier === 'sleeping') return `${tag}${name}，富智慧给你留了一份新内容：${assets.linkTitle}\n${link}\n${FOLLOW_QR_HINT}\n不想再收到此类提醒，回复「退订」即可。`;
+  return `${tag}${name}，好久不见。最近有新内容：${assets.linkTitle}\n${link}\n${FOLLOW_QR_HINT}\n想了解附近体验点，直接回复所在城市即可。`;
 }
 
 async function sendRich(openid: string, text: string, withMedia: boolean) {

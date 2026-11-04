@@ -429,6 +429,12 @@ export default function ChinaMemberDashboardPage() {
               <QrCode className="h-4 w-4" />
               推广工作台
             </Link>
+            {workspace.referralCode ? (
+              <Link href="/cn/member/follow-qr" className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#07C160] bg-white px-4 py-3.5 text-base font-bold text-[#07C160] hover:bg-emerald-50 md:rounded-lg md:py-2 md:text-sm">
+                <QrCode className="h-4 w-4" />
+                生成我的专属关注码
+              </Link>
+            ) : null}
             <Link href="/cn/orders" className="inline-flex items-center justify-center gap-2 rounded-xl border border-stone-300 bg-white px-4 py-3.5 text-base font-bold text-stone-800 md:rounded-lg md:py-2 md:text-sm">
               <ClipboardList className="h-4 w-4" />
               我的订单

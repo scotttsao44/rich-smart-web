@@ -19,6 +19,7 @@ import { and, eq } from 'drizzle-orm';
 import { linkOrCreateUserFromExternalProfile } from '@/lib/oauth';
 import { linkLocalCnWechatIdentityToMember } from '@/lib/local-cn-member-identities';
 import { readPendingReferralAttribution } from '@/lib/local-cn-referral-attribution';
+import { followBindingReferralCode } from '@/lib/local-cn-follow-qr';
 
 export type WechatWebKind = 'official' | 'open';
 
@@ -220,7 +221,9 @@ export async function finishWechatWebOAuth(request: NextRequest, kind: WechatWeb
       } catch {}
       const qrSession = qrSid ? getWechatQrSession(qrSid) : null;
       // 未填推荐码不默认官方直属：留空 → 新会员为「归属待确认」
-      const effectiveRefCode = explicitCnReferrerCode(referralCode || qrSession?.referrerCode || '');
+      // 专属关注码：该服务号 openid 的关注来源绑定优先于链接 ?ref（仅服务号网页授权，openid 同一服务号）
+      const followRefCode = kind === 'official' ? followBindingReferralCode(profile.openId) : '';
+      const effectiveRefCode = explicitCnReferrerCode(followRefCode || referralCode || qrSession?.referrerCode || '');
       const effectiveUnionId = profile.unionId || `wx_union_${provider.appId}_${profile.openId}`;
 
       if (state.bindMemberId) {

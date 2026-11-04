@@ -1,3 +1,4 @@
+import { bindFollowSource, parseFollowRefScene } from './local-cn-follow-qr';
 import { listLocalCnOrders } from '@/lib/local-cn-orders';
 import { listLocalCnUsers, setLocalCnUserSelfIdentity } from '@/lib/local-cn-users';
 import {
@@ -946,6 +947,8 @@ async function processMessage(msg: Record<string, string>, deadline: number): Pr
         c.subscribed = true;
         if (msg.EventKey) c.source = String(msg.EventKey).replace(/^qrscene_/, '').slice(0, 64);
       });
+      // 专属关注码（qrscene_ref_<推荐码>）：首次来源绑定，先到先得，不覆盖
+      if (parseFollowRefScene(msg.EventKey)) bindFollowSource(openid, String(msg.EventKey), 'subscribe');
       appendKefuMessage(openid, { role: 'system', type: 'event', text: `关注${msg.EventKey ? `（来源：${String(msg.EventKey).replace(/^qrscene_/, '')}）` : ''}` });
       // 门店申请页的带参二维码：不发通用欢迎语，直接发门店申请问题模板（客服消息）
       if (parseStoreApplyScene(msg.EventKey)) return startStoreApply(openid, String(msg.EventKey), 'subscribe', deadline);
@@ -963,6 +966,15 @@ async function processMessage(msg: Record<string, string>, deadline: number): Pr
         c.subscribed = true;
       });
       return startStoreApply(openid, String(msg.EventKey), 'scan', deadline);
+    }
+    if (event === 'scan' && parseFollowRefScene(msg.EventKey)) {
+      const r = bindFollowSource(openid, String(msg.EventKey), 'scan');
+      updateKefuConversation(openid, (c) => {
+        linkMember(c);
+        c.subscribed = true;
+      });
+      appendKefuMessage(openid, { role: 'system', type: 'event', text: `扫码（来源：${String(msg.EventKey).replace(/^qrscene_/, '')}${r.bound ? '，已绑定首次来源' : ''}）` });
+      return null;
     }
     if (event === 'unsubscribe') {
       if (getKefuConversation(openid)) {
