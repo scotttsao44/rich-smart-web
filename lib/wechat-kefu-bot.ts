@@ -1,5 +1,5 @@
 import { listLocalCnOrders } from '@/lib/local-cn-orders';
-import { listLocalCnUsers } from '@/lib/local-cn-users';
+import { listLocalCnUsers, setLocalCnUserSelfIdentity } from '@/lib/local-cn-users';
 import {
   appendKefuMessage,
   claimKefuMessageKey,
@@ -64,6 +64,7 @@ import {
   KEFU_REFERRAL_CODE_REPLY,
   KEFU_ADDRESS_CHANGE_REPLY,
   KEFU_BRAND_APPLY_REPLY,
+  KEFU_BRAND_APPLY_URL,
   KEFU_BRAND_FEE_REPLY,
   KEFU_BRAND_REVIEW_REPLY,
   KEFU_BRAND_CONTACT_REPLY,
@@ -226,6 +227,144 @@ function notifyLead(openid: string, simple: string, text: string, reason: string
     notifyStoreOwnersForCity(city, { type: 'lead', phone, source: `服务号客服（${reason}）`, test, simulated: isSimulatedOpenid(openid) }, { copyToAdmins: false })
       .catch(() => console.warn('[wechat-kefu] store owner notify error'));
   }
+}
+
+// ── 回复数字身份菜单（服务号）：1 预约到店体验／2 店主・体验点负责人／3 代理・渠道／4 会员・了解产品 ──
+// 身份为客人自报，存会话＋会员记录（selfIdentity），店主／代理仍需管理员确认；店主候选、代理线索通知曹总
+export const KEFU_IDENTITY_MENU = [
+  '请回复数字，方便我们更好地为您服务：',
+  '1 预约到店体验',
+  '2 我是店主（已有机器）',
+  '3 申请品牌前页（主页）',
+  '4 申请商品入驻',
+  '5 申请门店合作',
+  '6 了解门店／体验点',
+  '7 我是代理／渠道',
+].join('\n');
+const RE_SLOT_ONE = /^[1１]$/;
+const RE_MENU_DIGIT = /^[1-7１-７]$/;
+const MENU_KIND = { '1': 'visitor', '2': 'owner', '3': 'brand_page', '4': 'brand_product', '5': 'store_apply', '6': 'stores', '7': 'agent' } as const;
+type MenuKind = (typeof MENU_KIND)[keyof typeof MENU_KIND];
+const MENU_LABEL: Record<MenuKind, string> = { visitor: '预约到店体验', owner: '自称店主（待后台确认）', brand_page: '申请品牌前页', brand_product: '申请商品入驻', store_apply: '申请门店合作', stores: '了解门店／体验点', agent: '自称代理（待后台确认）' };
+const SLOT_SOURCE = '服务号群发「回复 1」领取本周到店体验名额';
+const SLOT_STOP = /^(好|好的|是|是的|嗯|嗯嗯|谢谢|可以|行|ok|收到|没有|不用|[1-7１-７])$/i;
+const menuDigit = (t: string) => String('1234567'['１２３４５６７'.indexOf(t)] || t);
+
+function slotRest(raw: string) {
+  let t = raw.replace(/[\s-]/g, '').replace(RE_MOBILE, '');
+  for (const city of KEFU_CITIES) t = t.split(`${city}市`).join('').split(city).join('');
+  t = t.replace(/[，,。.!！?？~～、:：;；]/g, '').replace(/^(我是|我叫|叫我|称呼|姓名|名字|我姓|姓|店名|门店|公司)/, '');
+  return !t || SLOT_STOP.test(t) ? '' : t.slice(0, 30);
+}
+function slotName(raw: string) {
+  const t = slotRest(raw);
+  return t && !/\d/.test(t) && /^[\u4e00-\u9fa5A-Za-z]{1,8}$/.test(t) ? t : '';
+}
+
+function slotState(openid: string, simple: string) {
+  const conv = getKefuConversation(openid);
+  const msgs = conv?.messages || [];
+  let start = -1;
+  msgs.forEach((m, i) => { if (m.role === 'user' && RE_MENU_DIGIT.test(String(m.text || '').trim())) start = i; });
+  const kind: MenuKind = start >= 0 ? MENU_KIND[menuDigit(String(msgs[start].text).trim()) as keyof typeof MENU_KIND] : 'visitor';
+  const after = start >= 0 ? msgs.slice(start + 1) : [];
+  const texts = after.filter((m) => m.role === 'user' && m.type === 'text').map((m) => kefuToSimplified(m.text));
+  const user = listLocalCnUsers().find((u) => u.wechatOfficialOpenId && u.wechatOfficialOpenId === openid);
+  const accountPhone = RE_MOBILE.test(String(user?.phone || '')) ? String(user?.phone) : '';
+  const accountName = user?.name && !/^(微信用户|用户|会员|游客)/.test(user.name) && !/^\d+$/.test(user.name) ? String(user.name) : '';
+  const rev = [...texts].reverse();
+  const phone = rev.map((t) => t.replace(/[\s-]/g, '').match(RE_MOBILE)?.[0]).find(Boolean) || accountPhone;
+  let city = '';
+  for (const t of rev) { city = KEFU_CITIES.find((x) => t.includes(x)) || ''; if (city) break; }
+  if (!city) city = leadInfo(openid, simple).city;
+  const name = rev.map(slotName).find(Boolean) || accountName;
+  const label = rev.map(slotRest).find(Boolean) || '';
+  const labels = texts.map(slotRest).filter(Boolean).join('；').slice(0, 80);
+  const routed = after.some((m) => m.role === 'system' && m.type === 'lead_notify' && m.tag === `menu_${kind}`);
+  return { kind, city, phone, name, label, labels, routed, user };
+}
+
+function saveIdentity(openid: string, kind: MenuKind, detail: string) {
+  const at = new Date().toISOString();
+  const rec = { type: kind, label: MENU_LABEL[kind], detail: detail.slice(0, 120), at, source: 'service_account_menu', confirmed: false };
+  updateKefuConversation(openid, (c) => { (c as unknown as { identity?: unknown }).identity = rec; });
+  const u = listLocalCnUsers().find((x) => x.wechatOfficialOpenId && x.wechatOfficialOpenId === openid);
+  if (u) { try { setLocalCnUserSelfIdentity(u.id, rec); } catch { /* 会员记录写失败不影响回复 */ } }
+}
+function knownIdentity(openid: string) {
+  const c = getKefuConversation(openid) as (KefuConversation & { identity?: { type?: string } }) | null;
+  const u = listLocalCnUsers().find((x) => x.wechatOfficialOpenId && x.wechatOfficialOpenId === openid);
+  return c?.identity?.type || u?.selfIdentity?.type || '';
+}
+
+function notifyAdmins(openid: string, reason: string, text: string, detail: string) {
+  const fresh = getKefuConversation(openid);
+  if (fresh) notifyKefuHandoff(fresh, reason, text, { force: true, detail }).catch(() => console.warn('[wechat-kefu] menu notify error'));
+}
+
+function menuFlow(openid: string, text: string, simple: string, trigger: boolean) {
+  const st = slotState(openid, simple);
+  const head = (t: string) => (trigger ? t : '好的，');
+  // 公共服务号：链接一律不带推荐码
+  if (st.kind === 'brand_page') {
+    saveIdentity(openid, 'brand_page', '');
+    return passive(openid, `申请品牌前页（品牌主页）：公司主体在 ${KEFU_BRAND_APPLY_URL} 填写公司名称、统一社会信用代码、联系人并上传营业执照；平台审核通过后开通品牌工作台，生成品牌专属展示页，进度可在申请页查看。个人不能申请。留言公司名称和手机号，可由专人对接。`, 'brand');
+  }
+  if (st.kind === 'brand_product') {
+    saveIdentity(openid, 'brand_product', '');
+    return passive(openid, KEFU_BRAND_APPLY_REPLY, 'brand');
+  }
+  if (st.kind === 'store_apply') {
+    saveIdentity(openid, 'store_apply', '');
+    return passive(openid, kefuApplyReply(), 'apply');
+  }
+  if (st.kind === 'stores') {
+    saveIdentity(openid, 'stores', '');
+    return passive(openid, `${kefuStoresLine()}\n想预约到店体验请回复 1。`, 'visit');
+  }
+  if (st.kind === 'owner') {
+    const thanks = '感谢您！我们每天会生成推广和预约文章帮门店带客流，欢迎多帮忙转发。';
+    const hasPlace = /(旁|门口|前台|大厅|楼|层|室|区|角|边|里|内|位置|包间|房|厅)/.test(st.labels.replace(/^[^；]*?(店|馆|院|会所|中心|堂)/, '')) || st.labels.includes('；');
+    if (st.city && st.labels && hasPlace) {
+      const detail = `门店／机器位置：${st.labels}；城市：${st.city}${st.phone ? `；手机：${st.phone}` : ''}${st.user ? `；会员 #${st.user.id}` : '；未绑定会员'}`;
+      if (!st.routed) {
+        appendKefuMessage(openid, { role: 'system', type: 'lead_notify', tag: 'menu_owner', text: `自称店主（待后台确认）：${detail}` });
+        saveIdentity(openid, 'owner', `${st.labels}（${st.city}）`);
+        notifyAdmins(openid, '自称店主（待后台确认）', text, detail);
+      }
+      return passive(openid, `已登记：${st.labels}（${st.city}），店主身份待后台确认。${thanks}`, 'menu_owner_done');
+    }
+    return passive(openid, `${head('您好，店主！')}请回复${st.labels ? (st.city ? '机器摆放位置' : '所在城市和机器摆放位置') : '门店名称、所在城市和机器摆放位置'}（例如：${st.labels ? '' : '良源养生馆 '}${st.city ? '' : '苏州 '}前台旁），我们登记后由后台确认。${trigger ? thanks : ''}`, 'menu_owner');
+  }
+  if (st.kind === 'agent') {
+    if (st.city && st.label) {
+      const detail = `城市：${st.city}；公司／称呼：${st.label}${st.phone ? `；手机：${st.phone}` : ''}${st.user ? `；会员 #${st.user.id}` : ''}`;
+      if (!st.routed) {
+        appendKefuMessage(openid, { role: 'system', type: 'lead_notify', tag: 'menu_agent', text: `自称代理（待后台确认）：${detail}` });
+        saveIdentity(openid, 'agent', `${st.label}（${st.city}）`);
+        notifyAdmins(openid, '自称代理／渠道（待后台确认）', text, detail);
+      }
+      return passive(openid, `已登记：${st.label}（${st.city}），身份待后台确认，已转给负责渠道合作的同事。${st.phone ? '' : '方便的话也可以留个手机号。'}`, 'menu_agent_done');
+    }
+    const miss = [st.city ? '' : '所在城市', st.label ? '' : '公司名称或称呼'].filter(Boolean);
+    return passive(openid, `${head('您好，欢迎洽谈渠道合作！')}请回复${miss.join('和')}（例如：${[st.city ? '' : '苏州', st.label ? '' : '某某贸易 王先生'].filter(Boolean).join(' ')}）。`, 'menu_agent');
+  }
+  // 1：预约到店体验
+  if (st.city && st.phone) {
+    if (!st.routed) {
+      const detail = `城市：${st.city}；称呼：${st.name || '未提供'}；手机：${st.phone}`;
+      appendKefuMessage(openid, { role: 'system', type: 'lead_notify', tag: 'menu_visitor', text: `已通知：${SLOT_SOURCE}（${detail}）` });
+      saveIdentity(openid, 'visitor', st.city);
+      const test = String(process.env.KEFU_NOTIFY_OPENIDS || '').split(',').map((x) => x.trim()).includes(openid);
+      notifyStoreOwnersForCity(st.city, { type: 'lead', phone: st.phone, source: SLOT_SOURCE, note: st.name ? `称呼：${st.name}` : undefined, test, simulated: isSimulatedOpenid(openid) }, { copyToAdmins: true })
+        .then((r) => { if (!r.routed) notifyAdmins(openid, `${SLOT_SOURCE}（${st.city}暂无门店）`, text, detail); })
+        .catch(() => console.warn('[wechat-kefu] visit slot notify error'));
+    }
+    return passive(openid, `${st.name ? `${st.name}，` : ''}已为您登记本周到店体验名额（${st.city}）。门店同事会通过尾号 ${st.phone.slice(-4)} 的手机号联系您，确认具体到店时间。`, 'menu_visitor_done');
+  }
+  const missing = [st.city ? '' : '城市', st.name ? '' : '称呼', st.phone ? '' : '手机号'].filter(Boolean);
+  const example = [st.city ? '' : '苏州', st.name ? '' : '王女士', st.phone ? '' : '138xxxxxxxx'].filter(Boolean).join(' ');
+  return passive(openid, `${head('收到，欢迎来体验！为您登记本周到店体验名额，')}还需要您的${missing.join('、')}（例如：${example}），方便门店同事联系您安排。`, 'menu_visitor');
 }
 
 const RE_YES = /^(是|是的|对|对的|可以|好|好的|嗯|嗯嗯|没错|行|ok|用这个|就这个|就用这个|还是这个)$/i;
@@ -511,6 +650,19 @@ async function handleText(openid: string, text: string, deadline: number): Promi
   // 门店申请页扫码后的申请收集：解析字段、只追问缺的项，收齐后记录并通知客服
   const storeApplyReply = continueStoreApply(openid, text, { cities: KEFU_CITIES, human: RE_HUMAN.test(simple) });
   if (storeApplyReply !== null) return storeApplyReply;
+
+  // 回复数字身份菜单：1 到店体验／2 店主／3 代理／4 会员；上一条是追问时，客人补的资料继续登记；新关注者首条其他消息回菜单
+  {
+    const lastAiSlot = conv ? [...conv.messages].reverse().find((m) => m.role === 'ai') : undefined;
+    const recentPriceAsk = lastAiSlot?.tag === 'price_clarify' && Date.now() - Date.parse(lastAiSlot.at) < LEAD_THROTTLE_MS;
+    const tc = text.trim();
+    if (RE_MENU_DIGIT.test(tc) && !(recentPriceAsk && /^[1-3１-３]$/.test(tc))) return menuFlow(openid, text, simple, true);
+    if (['menu_visitor', 'menu_owner', 'menu_agent'].includes(String(lastAiSlot?.tag)) && (RE_MOBILE.test(text.replace(/[\s-]/g, '')) || KEFU_CITIES.some((x) => simple.includes(x)) || slotRest(simple))) return menuFlow(openid, text, simple, false);
+    const userTexts = (conv?.messages || []).filter((m) => m.role === 'user' && m.type === 'text').length;
+    const member = listLocalCnUsers().some((u) => u.wechatOfficialOpenId === openid);
+    const fresh = !member || (conv && Date.now() - Date.parse(conv.createdAt) < 24 * 3600 * 1000);
+    if (userTexts <= 1 && fresh && !knownIdentity(openid) && !/(人工|客服|电话)/.test(simple)) return passive(openid, `您好，欢迎关注「糙米量子」！\n${KEFU_IDENTITY_MENU}`, 'menu');
+  }
 
   // 客人确认沿用之前留过的手机号（上一条 AI 回复是「还是用尾号 xxxx 联系您吗？」）
   const lastAi = conv ? [...conv.messages].reverse().find((m) => m.role === 'ai') : undefined;
@@ -798,7 +950,7 @@ async function processMessage(msg: Record<string, string>, deadline: number): Pr
       // 门店申请页的带参二维码：不发通用欢迎语，直接发门店申请问题模板（客服消息）
       if (parseStoreApplyScene(msg.EventKey)) return startStoreApply(openid, String(msg.EventKey), 'subscribe', deadline);
       if (parseOwnerBindScene(msg.EventKey)) return passive(openid, handleOwnerBindScan(openid, String(msg.EventKey)) || KEFU_WELCOME, 'owner_bind');
-      return passive(openid, KEFU_WELCOME, 'welcome');
+      return passive(openid, `${KEFU_WELCOME}\n\n${KEFU_IDENTITY_MENU}`, 'welcome');
     }
     if (event === 'scan' && parseOwnerBindScene(msg.EventKey)) {
       updateKefuConversation(openid, (c) => { c.subscribed = true; });
@@ -830,9 +982,10 @@ async function processMessage(msg: Record<string, string>, deadline: number): Pr
     appendKefuMessage(openid, { role: 'user', type, text: text.slice(0, 2000), msgKey: msg.MsgId }, linkMember);
     const short = text.trim();
     // 店主回复「收到」确认通知；回复「退订」停止分层唤醒推送
-    if (/^(收到|收到了|已收到|1)$/.test(short)) {
+    // 「1」只在店主确有待确认通知时当作确认；否则按群发「回复 1」领取到店体验名额处理
+    if (/^(收到|收到了|已收到|1|１)$/.test(short)) {
       const acked = ackPendingByOpenid(openid);
-      if (acked >= 0) return passive(openid, acked > 0 ? '已确认收到，谢谢！' : '收到，明天继续为你推送简报。', 'owner_ack');
+      if (acked > 0 || (acked === 0 && !/^[1１]$/.test(short))) return passive(openid, acked > 0 ? '已确认收到，谢谢！' : '收到，明天继续为你推送简报。', 'owner_ack');
     }
     if (/^(退订|TD|td)$/.test(short)) {
       setPushOptOut(openid, true);

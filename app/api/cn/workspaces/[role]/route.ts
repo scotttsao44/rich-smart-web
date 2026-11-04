@@ -8,6 +8,7 @@ import { getApprovedBrandForUser } from '@/lib/local-cn-brand-marketplace';
 import { listStoreApplications } from '@/lib/local-cn-store-applications';
 import { getOrganizationRole } from '@/lib/local-cn-organization-members';
 import { getCnPaymentSettings } from '@/lib/cn-payment-settings';
+import { notifyCustomerBookingSuccess } from '@/lib/wechat-booking-notify';
 
 export const dynamic = 'force-dynamic';
 
@@ -99,6 +100,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { role: 
   const error = validationError(params.role, collection, updates);
   if (error) return NextResponse.json({ error }, { status: 400 });
   const updated = updateWorkspace(params.role, collection, String(body.id || ''), updates);
+  if (updated && params.role === 'store' && collection === 'appointments' && updates.status === '已预约') void notifyCustomerBookingSuccess(user, updated as Record<string, unknown>);
   return updated ? NextResponse.json({ updated }) : NextResponse.json({ error: '找不到记录' }, { status: 404 });
 }
 
@@ -109,5 +111,7 @@ export async function POST(request: NextRequest, { params }: { params: { role: s
   const body = await request.json();
   const collection = String(body.collection || '');
   if (!collection || !body.item || typeof body.item !== 'object') return NextResponse.json({ error: '资料不完整' }, { status: 400 });
-  return NextResponse.json({ created: addWorkspaceItem(params.role, collection, body.item) }, { status: 201 });
+  const created = addWorkspaceItem(params.role, collection, body.item);
+  if (params.role === 'store' && collection === 'appointments') void notifyCustomerBookingSuccess(user, (created || body.item) as Record<string, unknown>);
+  return NextResponse.json({ created }, { status: 201 });
 }

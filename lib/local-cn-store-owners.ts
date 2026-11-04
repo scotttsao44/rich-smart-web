@@ -7,6 +7,7 @@ import { listActiveStoreApplicationsForNotify } from './local-cn-store-applicati
 import { findLocalCnUserById, listLocalCnUsers } from './local-cn-users';
 import { getKefuConversation } from './local-cn-wechat-kefu';
 import { sendMpCustomText, sendMpTemplate } from './wechat-mp-api';
+import { bookingNowText, sendBookingSuccessTemplate, type BookingTemplateInput } from './wechat-booking-notify';
 
 // 店主／体验点负责人通知（预约与线索）
 // - 资格：已开通门店申请的门店负责人，或后台在体验点上指定的负责人（ownerMemberIds）
@@ -273,7 +274,7 @@ export function handleOwnerBindScan(openid: string, eventKey: string) {
 }
 
 // ── 发送 ──
-async function deliver(openid: string, text: string, tpl: Record<string, string> | null, url: string, simulated: boolean) {
+async function deliver(openid: string, text: string, tpl: Record<string, string> | null, url: string, simulated: boolean, booking?: BookingTemplateInput) {
   if (simulated || isSimulatedOpenid(openid)) return [{ channel: 'custom', status: 'simulated' }];
   const templateId = process.env.WECHAT_STORE_OWNER_TEMPLATE_ID || process.env.WECHAT_KEFU_NOTIFY_TEMPLATE_ID || '';
   const order: Array<'template' | 'custom'> = templateId && tpl ? ['template', 'custom'] : ['custom'];
@@ -282,6 +283,12 @@ async function deliver(openid: string, text: string, tpl: Record<string, string>
     const r = channel === 'template' ? await sendMpTemplate(openid, templateId, url, tpl || {}) : await sendMpCustomText(openid, text);
     out.push({ channel, status: r.ok ? 'sent' : 'failed', errcode: r.ok ? '0' : String(r.errcode) });
     if (r.ok) break;
+  }
+  // 预约通知：客服消息 45015（超过 48 小时未互动）时改发「预约成功通知」模板消息（不受 48 小时限制）
+  const last = out[out.length - 1];
+  if (booking && last && last.channel === 'custom' && last.errcode === '45015') {
+    const r = await sendBookingSuccessTemplate(openid, { ...booking, url: booking.url || url }, 'owner-fallback');
+    out.push({ channel: 'booking_tpl', status: r.ok ? 'sent' : 'failed', errcode: r.ok ? '0' : String(r.errcode) });
   }
   return out;
 }
@@ -365,7 +372,12 @@ export async function notifyStoreOwner(targetId: string, event: OwnerEvent, opts
       thing1: shortText(`${tag}${eventLabel(event.type)} ${event.city || target.city}`, 18),
       thing2: shortText(`客人手机 ${phone || '未提供'}`, 18),
       time3: nowText(),
-    }, ackLink(pending.id), Boolean(event.simulated));
+    }, ackLink(pending.id), Boolean(event.simulated), event.type === 'appointment' ? {
+      store: `${tag}${target.label}`,
+      item: event.note || '阿富同学体验',
+      time: bookingNowText(),
+      address: target.label,
+    } : undefined);
     const last = results[results.length - 1];
     const row = mutate((s) => {
       const r = s.notices.find((n) => n.id === pending.id);

@@ -8,6 +8,7 @@ import AdminWechatScan from '@/components/AdminWechatScan';
 type Notice = { id: string; at: string; targetLabel: string; event: string; city: string; phoneTail: string; memberId: number; role: string; channel: string; status: string; errcode?: string; ackAt?: string; escalatedAt?: string; test?: boolean; simulated?: boolean };
 type Win = { open: boolean; label: string; lastInteractionAt: string | null };
 type Data = {
+  selfDeclared?: Array<{ memberId: number; name: string; type: string; label: string; detail: string; at: string; confirmed: boolean }>;
   owners: Array<{ memberId: number; name: string; targets: Array<{ id: string; label: string; city: string; source: string }>; eligible: boolean; enabled: boolean; bound: boolean; window: Win; lastNotice: Notice | null }>;
   admins: Array<{ openidTail: string; name: string; window: Win; lastNotice: Notice | null }>;
   points: Array<{ id: string; city: string; label: string; ownerMemberIds: number[] }>;
@@ -192,6 +193,23 @@ export default function PushPeoplePage() {
                 </tr>
               ))}
               {data && !data.owners.length ? <tr><td colSpan={8} className="px-4 py-4 text-stone-500">暂无店主。可在下方为体验点指定负责人会员 ID，或等门店申请开通后自动列入。</td></tr> : null}
+            </tbody>
+          </table>
+        </section>
+
+        <section className="mt-6 overflow-x-auto rounded-lg border border-stone-200 bg-white" data-testid="self-declared">
+          <h2 className="border-b border-stone-100 px-4 py-3 font-black">服务号自报身份（{data?.selfDeclared?.length ?? 0}）<span className="ml-2 text-xs font-semibold text-stone-500">客人回复数字自报；店主／代理需管理员确认后再设置</span></h2>
+          <table className="w-full text-left text-sm">
+            <thead className="bg-stone-50 text-xs text-stone-500"><tr><th className="px-4 py-2">会员</th><th className="px-4 py-2">自报身份</th><th className="px-4 py-2">登记内容</th><th className="px-4 py-2">时间</th></tr></thead>
+            <tbody>
+              {(data?.selfDeclared || []).map((r, i) => (
+                <tr key={`${r.memberId}-${i}`} className="border-t border-stone-100">
+                  <td className="px-4 py-2">{r.name}{r.memberId ? ` #${r.memberId}` : '（未绑定会员）'}</td>
+                  <td className="px-4 py-2 font-bold">{r.label}</td>
+                  <td className="px-4 py-2">{r.detail || '—'}</td>
+                  <td className="px-4 py-2">{t(r.at)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </section>

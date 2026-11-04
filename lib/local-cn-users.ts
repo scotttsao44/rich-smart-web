@@ -66,6 +66,8 @@ export type LocalCnUser = {
   profileAuthorizedAt?: string | null; onboardingCompletedAt?: string | null;
   questionnaire?: { gender: string; birthYear: string; healthGoal: string; store: string } | null;
   createdAt: string;
+  // 服务号回复数字自报身份（店主／代理仍需管理员确认）
+  selfIdentity?: { type: string; label: string; detail: string; at: string; source: string; confirmed: boolean } | null;
   emailVerifiedAt?: string | null;
   emailRegistrationId?: string | null;
   emailCredentialVersion?: number;
@@ -445,6 +447,17 @@ export function updateLocalCnUserNickname(id: number, nickname: string) {
   user.name = next;
   writeAll(users);
   return user;
+}
+
+export function setLocalCnUserSelfIdentity(id: number, identity: NonNullable<LocalCnUser['selfIdentity']>) {
+  return withLocalCnUsersWriteLock(() => {
+    const users = readAll();
+    const user = users.find((item) => item.id === id);
+    if (!user) throw new Error('找不到该会员');
+    user.selfIdentity = identity;
+    writeAll(users);
+    return user;
+  });
 }
 
 export function findLocalCnUserByReferralCode(code: string) {
