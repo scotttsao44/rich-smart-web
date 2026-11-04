@@ -3,13 +3,14 @@ import QRCode from 'qrcode';
 import { getRequestSession, hasPlatformAdminAccess } from '@/lib/auth';
 import { getStoreApplicationById, setStoreApplicationPrepayPending, type StoreApplication } from '@/lib/local-cn-store-applications';
 import {
-  STORE_PREPAY_TIERS,
   STORE_PREPAY_VALID_MONTHS,
   ensureStorePrepayOrder,
   listStorePrepayOrdersForApplication,
   noteStorePrepayTradeNo,
   recordStorePrepayPaid,
+  storePrepayTestAllowed,
   storePrepayTier,
+  storePrepayTiersForViewer,
   type StorePrepayOrder,
 } from '@/lib/cn-store-prepay';
 import { findLocalCnUserById } from '@/lib/local-cn-users';
@@ -75,7 +76,8 @@ export async function GET(request: NextRequest) {
   const user = getRequestSession(request);
   if (!user) return NextResponse.json({ error: '请先登录' }, { status: 401 });
   const applicationId = String(request.nextUrl.searchParams.get('applicationId') || '');
-  const base = { tiers: STORE_PREPAY_TIERS, validMonths: STORE_PREPAY_VALID_MONTHS };
+  const tiers = storePrepayTiersForViewer(user.id, hasPlatformAdminAccess(user));
+  const base = { tiers, validMonths: STORE_PREPAY_VALID_MONTHS };
   if (!applicationId) return NextResponse.json(base);
   const application = getStoreApplicationById(applicationId);
   if (!application || (!canPay(user, application) && !hasPlatformAdminAccess(user))) return NextResponse.json({ error: '找不到申请' }, { status: 404 });
@@ -99,6 +101,9 @@ export async function POST(request: NextRequest) {
   if (!PAYABLE_STATUSES.includes(application.status)) return NextResponse.json({ error: '该申请目前不可付款，请联系客服' }, { status: 400 });
   const tier = storePrepayTier(body.tier);
   if (!tier) return NextResponse.json({ error: '请选择预购次数（次卡）档位' }, { status: 400 });
+  if (tier.testOnly && !storePrepayTestAllowed(user.id, hasPlatformAdminAccess(user))) {
+    return NextResponse.json({ error: '该测试档位仅限内部自测账号使用' }, { status: 403 });
+  }
   if (!isWechatPayLiveConfigured()) return NextResponse.json({ error: '微信支付暂未开通，请联系客服' }, { status: 503 });
 
   const { order, superseded } = ensureStorePrepayOrder(application, tier);
@@ -106,7 +111,9 @@ export async function POST(request: NextRequest) {
   // 改档：关闭旧档位已下单的交易，避免旧二维码仍可付款
   for (const old of superseded) for (const tradeNo of old.tradeNos) await closeWechatPayment(tradeNo).catch(() => undefined);
 
-  const description = `阿富同学预购次数（次卡）${tier.id}档 ${tier.uses}次`;
+  const description = tier.testOnly
+    ? `阿富同学付款测试（测完可退）${tier.amountYuan}元`
+    : `阿富同学预购次数（次卡）${tier.id}档 ${tier.uses}次`;
   const attach = application.id;
   const ua = request.headers.get('user-agent') || '';
   const inWechat = /micromessenger/i.test(ua) && !/miniprogram/i.test(ua);

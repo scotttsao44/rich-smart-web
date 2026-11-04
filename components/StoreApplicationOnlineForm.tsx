@@ -5,7 +5,7 @@ import { ClipboardCheck, Loader2, Send } from 'lucide-react';
 import StorePrepayPanel from '@/components/StorePrepayPanel';
 
 // 简体门店申请页：登录会员在线填写申请 → 选择预购次数（次卡）档位 → 微信付款
-type Tier = { id: string; amountYuan: number; uses: number };
+type Tier = { id: string; amountYuan: number; uses: number; testOnly?: boolean };
 type Unpaid = { id: string; name: string; status: string; prepay?: { tier?: string; status?: string } };
 
 const RETURN_PATH = '/cn/member/store-application';
@@ -93,10 +93,10 @@ export default function StoreApplicationOnlineForm() {
             <div className="text-xs font-bold text-stone-600">预购次数（次卡）档位 · 有效期 3 个月（自付款日起）</div>
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
               {tiers.map((t) => (
-                <button key={t.id} type="button" onClick={() => setForm({ ...form, prepayTier: t.id })} className={`rounded-lg border-2 p-3 text-left ${form.prepayTier === t.id ? 'border-teal-600 bg-teal-50' : 'border-stone-200 bg-white'}`}>
-                  <div className="text-xs font-black text-teal-700">{t.id} 档</div>
+                <button key={t.id} type="button" onClick={() => setForm({ ...form, prepayTier: t.id })} className={`rounded-lg border-2 p-3 text-left ${form.prepayTier === t.id ? 'border-teal-600 bg-teal-50' : t.testOnly ? 'border-amber-300 bg-amber-50' : 'border-stone-200 bg-white'}`}>
+                  <div className={`text-xs font-black ${t.testOnly ? 'text-amber-800' : 'text-teal-700'}`}>{t.testOnly ? '付款测试／测完可退' : `${t.id} 档`}</div>
                   <div className="mt-1 text-lg font-black tabular-nums">¥{t.amountYuan.toLocaleString('en-US')}</div>
-                  <div className="text-sm font-bold text-stone-700">{t.uses} 次</div>
+                  <div className="text-sm font-bold text-stone-700">{t.testOnly ? '内部自测 · 不计入正式档' : `${t.uses} 次`}</div>
                 </button>
               ))}
             </div>

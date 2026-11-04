@@ -14,6 +14,35 @@ const POSTER_OPTIONS = [
 
 type Status = { eligible: boolean; reason?: string; generated: boolean; referralCode?: string; createdAt?: string };
 
+/** 用 fetch→blob→objectURL 塞进 <img>，避免微信把 API URL 当附件「接收文件」。 */
+function useBlobObjectUrl(enabled: boolean, loader: () => Promise<Blob | null>, deps: unknown[]) {
+  const [src, setSrc] = useState('');
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!enabled) { setSrc(''); setFailed(false); return; }
+    let alive = true;
+    let objectUrl = '';
+    setFailed(false);
+    (async () => {
+      try {
+        const blob = await loader();
+        if (!alive || !blob) { if (alive && !blob) setFailed(true); return; }
+        objectUrl = URL.createObjectURL(blob);
+        if (!alive) { URL.revokeObjectURL(objectUrl); return; }
+        setSrc(objectUrl);
+      } catch {
+        if (alive) setFailed(true);
+      }
+    })();
+    return () => {
+      alive = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, ...deps]);
+  return { src, failed };
+}
+
 export default function FollowQrPage() {
   const [status, setStatus] = useState<Status | null>(null);
   const [needLogin, setNeedLogin] = useState(false);
@@ -23,7 +52,8 @@ export default function FollowQrPage() {
   const [picked, setPicked] = useState<string[]>(POSTER_OPTIONS.map((o) => o.key));
   const [posterBusy, setPosterBusy] = useState(false);
   const [posterError, setPosterError] = useState('');
-  const [posterSrc, setPosterSrc] = useState('');
+  const [posterBlocks, setPosterBlocks] = useState('');
+  const [posterStamp, setPosterStamp] = useState(0);
 
   const load = useCallback(async () => {
     const res = await fetch('/api/cn/wechat/follow-qr', { cache: 'no-store' });
@@ -57,7 +87,8 @@ export default function FollowQrPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) setPosterError(data.error || '生成失败，请稍后再试');
       else {
-        setPosterSrc(`/api/cn/wechat/follow-qr/poster?blocks=${blocks}&t=${Date.now()}`);
+        setPosterBlocks(blocks);
+        setPosterStamp(Date.now());
         if (!status?.generated) await load();
       }
     } catch {
@@ -67,8 +98,29 @@ export default function FollowQrPage() {
     }
   };
 
-  // 同域 image/png（inline），勿用 <a download>：微信内会变成「接收文件」无法存相册
-  const imgSrc = `/api/cn/wechat/follow-qr?format=png${stamp ? `&t=${stamp}` : ''}`;
+  const qrBlob = useBlobObjectUrl(
+    Boolean(status?.generated),
+    async () => {
+      const res = await fetch(`/api/cn/wechat/follow-qr?format=png&t=${stamp || Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) return null;
+      const type = res.headers.get('content-type') || '';
+      if (!type.includes('image/')) return null;
+      return res.blob();
+    },
+    [stamp, status?.generated],
+  );
+
+  const posterBlob = useBlobObjectUrl(
+    Boolean(posterBlocks && posterStamp),
+    async () => {
+      const res = await fetch(`/api/cn/wechat/follow-qr/poster?blocks=${encodeURIComponent(posterBlocks)}&t=${posterStamp}`, { cache: 'no-store' });
+      if (!res.ok) return null;
+      const type = res.headers.get('content-type') || '';
+      if (!type.includes('image/')) return null;
+      return res.blob();
+    },
+    [posterBlocks, posterStamp],
+  );
 
   return (
     <main className="mx-auto min-h-screen max-w-md bg-stone-50 px-4 py-6">
@@ -94,30 +146,27 @@ export default function FollowQrPage() {
           {status.generated ? (
             <>
               <p className="mb-3 text-center text-base font-black leading-6 text-stone-900">长按图片保存到相册</p>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={imgSrc}
-                alt="我的专属关注码"
-                width={600}
-                height={600}
-                draggable={false}
-                className="mx-auto block aspect-square w-full max-w-sm select-none rounded-xl border border-stone-100 bg-white object-contain p-2"
-              />
+              {qrBlob.src ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={qrBlob.src}
+                  alt="我的专属关注码"
+                  width={600}
+                  height={600}
+                  draggable={false}
+                  className="mx-auto block aspect-square w-full max-w-sm select-none rounded-xl border border-stone-100 bg-white object-contain p-2"
+                />
+              ) : (
+                <div className="mx-auto flex aspect-square w-full max-w-sm items-center justify-center rounded-xl border border-dashed border-stone-200 text-sm text-stone-400">
+                  {qrBlob.failed ? '图片加载失败，请刷新重试' : '图片加载中…'}
+                </div>
+              )}
               <p className="mt-3 text-center text-sm font-semibold leading-6 text-stone-600">
                 微信内请<strong className="text-stone-900">长按上方二维码</strong>，选择「保存到相册」或转发给朋友。
               </p>
               <p className="mt-1 text-center text-xs text-stone-400">
-                不要点页面外的「接收文件」；那是下载附件，无法存成图片。
+                不要点「接收文件」；那是下载附件，无法存成图片。
               </p>
-              {/* 非微信浏览器兜底：新窗口打开图片（无 download / attachment），不包在 img 外层 */}
-              <a
-                href={imgSrc}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 block text-center text-xs font-bold text-stone-400 underline-offset-2 hover:text-stone-600 hover:underline"
-              >
-                电脑端可点此在新窗口打开图片
-              </a>
             </>
           ) : (
             <button type="button" disabled={busy} onClick={generate} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#07C160] px-4 py-3.5 text-base font-bold text-white disabled:opacity-60">
@@ -149,12 +198,17 @@ export default function FollowQrPage() {
             <ImageIcon className="h-4 w-4" /> {posterBusy ? '生成中…' : '生成我的推广长图'}
           </button>
           {posterError ? <p className="mt-3 text-center text-sm font-semibold text-red-600">{posterError}</p> : null}
-          {posterSrc ? (
+          {posterBlocks && posterStamp ? (
             <>
               <p className="mb-3 mt-5 text-center text-base font-black leading-6 text-stone-900">长按图片保存到相册</p>
-              {/* 同域 image/png inline，不包链接、无 download：微信内长按存图 */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={posterSrc} alt="我的推广长图" width={1080} draggable={false} className="mx-auto block w-full select-none rounded-xl border border-stone-100 bg-white" />
+              {posterBlob.src ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={posterBlob.src} alt="我的推广长图" width={1080} draggable={false} className="mx-auto block w-full select-none rounded-xl border border-stone-100 bg-white" />
+              ) : (
+                <div className="mx-auto flex min-h-[12rem] w-full items-center justify-center rounded-xl border border-dashed border-stone-200 text-sm text-stone-400">
+                  {posterBlob.failed ? '长图加载失败，请重新生成' : '长图加载中…'}
+                </div>
+              )}
               <p className="mt-3 text-center text-sm font-semibold leading-6 text-stone-600">
                 微信内请<strong className="text-stone-900">长按上方长图</strong>，选择「保存到相册」或转发给朋友。
               </p>

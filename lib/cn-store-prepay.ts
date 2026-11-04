@@ -11,11 +11,32 @@ import { validateWechatTransaction, yuanToFen, type WechatPayTransaction } from 
 import { sendMpCustomText, sendMpTemplate } from './wechat-mp-api';
 
 export const STORE_PREPAY_VALID_MONTHS = 3;
-export type StorePrepayTier = { id: string; amountYuan: number; uses: number };
+export type StorePrepayTier = { id: string; amountYuan: number; uses: number; testOnly?: boolean };
+/** 正式档位（客服文案同源）；金额只在登录后付款步骤显示。 */
 export const STORE_PREPAY_TIERS: StorePrepayTier[] = KEFU_TIERS.map((t) => ({ id: t.id, amountYuan: t.amountYuan, uses: t.uses }));
+/** 仅供自测小额付款（不进客服正式档、不对外宣传）。测完可人工退。 */
+export const STORE_PREPAY_TEST_TIER: StorePrepayTier = { id: 'T', amountYuan: 5, uses: 1, testOnly: true };
+/** 默认可见测试档的会员（曹总自测）；也可用 env STORE_PREPAY_TEST_MEMBER_IDS=逗号分隔覆盖/追加。 */
+const DEFAULT_TEST_MEMBER_IDS = [513117808227];
+
+export function storePrepayTestAllowed(userId: number, isAdmin = false) {
+  if (isAdmin) return true;
+  const fromEnv = String(process.env.STORE_PREPAY_TEST_MEMBER_IDS || '')
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const allow = fromEnv.length ? fromEnv : DEFAULT_TEST_MEMBER_IDS;
+  return allow.includes(userId);
+}
+
+export function storePrepayTiersForViewer(userId: number, isAdmin = false): StorePrepayTier[] {
+  return storePrepayTestAllowed(userId, isAdmin) ? [...STORE_PREPAY_TIERS, STORE_PREPAY_TEST_TIER] : STORE_PREPAY_TIERS;
+}
 
 export function storePrepayTier(id: unknown) {
-  return STORE_PREPAY_TIERS.find((t) => t.id === String(id || '').trim().toUpperCase()) || null;
+  const key = String(id || '').trim().toUpperCase();
+  if (key === STORE_PREPAY_TEST_TIER.id) return STORE_PREPAY_TEST_TIER;
+  return STORE_PREPAY_TIERS.find((t) => t.id === key) || null;
 }
 
 export type StorePrepayOrder = {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRequestSession } from '@/lib/auth';
-import { storeApplicationAttribution, storePrepayTier } from '@/lib/cn-store-prepay';
+import { getRequestSession, hasPlatformAdminAccess } from '@/lib/auth';
+import { storeApplicationAttribution, storePrepayTestAllowed, storePrepayTier } from '@/lib/cn-store-prepay';
 import { createStoreApplication, listStoreApplications, memberDirectory, setStoreApplicationPrepayPending, updateStoreApplication } from '@/lib/local-cn-store-applications';
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +18,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     // 线上申请：选定预购次数（次卡）档位；推荐归属一律由服务端判定，不接受前端传入
     const tier = storePrepayTier(body.prepayTier);
+    if (tier?.testOnly && !storePrepayTestAllowed(user.id, hasPlatformAdminAccess(user))) {
+      return NextResponse.json({ error: '该测试档位仅限内部自测账号使用' }, { status: 403 });
+    }
     const input = { ...body, attribution: storeApplicationAttribution(user.id, body.ref), ...(tier ? { depositAmount: tier.amountYuan } : {}) };
     let created = createStoreApplication(user, input);
     if (tier) created = setStoreApplicationPrepayPending(created.id, { tier: tier.id, amountYuan: tier.amountYuan, uses: tier.uses, orderNo: '' }) || created;

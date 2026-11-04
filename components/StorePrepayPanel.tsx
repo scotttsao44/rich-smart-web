@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Loader2, QrCode, RefreshCw, X } from 'lucide-react';
 
 // 门店申请：选择预购次数（次卡）档位并微信付款。档位金额只由登录后的接口返回。
-type Tier = { id: string; amountYuan: number; uses: number };
+type Tier = { id: string; amountYuan: number; uses: number; testOnly?: boolean };
 type PrepayInfo = { tier: string; amountYuan: number; uses: number; status: 'unpaid' | 'paid'; orderNo: string; transactionId?: string; paidAt?: string; expiresAt?: string } | null;
 
 declare global {
@@ -163,10 +163,10 @@ export default function StorePrepayPanel({ applicationId, returnPath, onPaid, co
       <p className="mt-1 text-xs font-semibold leading-5 text-stone-600">每批次卡有效期 {validMonths} 个月（自付款日起）；平台审核并安排设备后，所购次数灌入门店机器。</p>
       <div className="mt-3 grid gap-2 sm:grid-cols-3">
         {tiers.map((t) => (
-          <button key={t.id} type="button" onClick={() => setTier(t.id)} className={`rounded-lg border-2 bg-white p-3 text-left ${tier === t.id ? 'border-teal-600' : 'border-stone-200'}`}>
-            <div className="text-xs font-black text-teal-700">{t.id} 档</div>
+          <button key={t.id} type="button" onClick={() => setTier(t.id)} className={`rounded-lg border-2 bg-white p-3 text-left ${tier === t.id ? 'border-teal-600' : t.testOnly ? 'border-amber-300' : 'border-stone-200'}`}>
+            <div className={`text-xs font-black ${t.testOnly ? 'text-amber-800' : 'text-teal-700'}`}>{t.testOnly ? '付款测试／测完可退' : `${t.id} 档`}</div>
             <div className="mt-1 text-xl font-black tabular-nums text-stone-950">¥{t.amountYuan.toLocaleString('en-US')}</div>
-            <div className="text-sm font-bold text-stone-700">{t.uses} 次 · {validMonths} 个月</div>
+            <div className="text-sm font-bold text-stone-700">{t.testOnly ? '内部自测 · 测完可退' : `${t.uses} 次 · ${validMonths} 个月`}</div>
           </button>
         ))}
       </div>
