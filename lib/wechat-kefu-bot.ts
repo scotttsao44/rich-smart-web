@@ -94,6 +94,8 @@ import {
   KEFU_PER_USE_REPLY,
   KEFU_PRICE_CLARIFY,
   KEFU_PRODUCT_INTRO,
+  kefuIsProductIntroAsk,
+  kefuUsageBodyReply,
   KEFU_RADIATION_PREFIX,
   KEFU_REFERRAL_REWARD_REPLY,
   KEFU_SHOP_PRICE_REPLY,
@@ -831,6 +833,10 @@ async function handleText(openid: string, text: string, deadline: number): Promi
   if (/(皮肤|局部).{0,4}(红|发红|起疹)|红了/.test(simple)) return passive(openid, `如果使用后皮肤发红或不适，请先停止使用；不适持续的话请及时就医。下次使用可以调低档位、拉开照射距离（约 20–50 cm），觉得灼热就挪开位置。\n${KEFU_NOT_MEDICAL}`, 'safety');
   if (RE_SUITABILITY.test(simple)) return passive(openid, kefuSafetyReply(), 'safety');
 
+  // 照射部位／穴位／怎么照：先答用法，勿被「是什么+机器」产品介绍或症状科普吞掉
+  const usageBody = kefuUsageBodyReply(simple);
+  if (usageBody) return passive(openid, usageBody, 'usage');
+
   if (/(脱衣服|隔着衣服|穿着衣服|穿衣服)/.test(simple)) return passive(openid, '不用脱衣服，隔一层薄棉质衣物就可以，照射头距离约 20–50 cm。', 'product');
   if (/(照射面积|面积多大|照多大)/.test(simple)) return passive(openid, '单次照射面积约 300×200 mm，照射头可电动升降、角度可调。', 'product');
   if (/(唤醒词|喊什么)/.test(simple)) return passive(openid, '唤醒词就是「阿富同学」，喊它可以语音调档和调节升降。', 'product');
@@ -885,7 +891,7 @@ async function handleText(openid: string, text: string, deadline: number): Promi
   if (/(生育光波|远红外).{0,6}(什么意思|是什么|什么)/.test(simple)) return passive(openid, '远红外生育光波指的是 8–14 μm 波段的远红外线，阿富同学的峰值波长是 9.4 μm（有 CNAS 波长检测报告）。它和旋磁一起用于日常的频率养生、放松体验。', 'product');
   if (/(原理|怎么工作|什么技术)/.test(simple)) return passive(openid, `阿富同学用的是远红外生育光波（8–14 μm，峰值 9.4 μm）＋旋磁，非接触照射，坐着或躺着、隔一层薄衣物即可。\n${KEFU_NOT_MEDICAL}`, 'product');
   if (/(流程|怎么用|如何使用|使用方法|步骤)/.test(simple)) return passive(openid, KEFU_FLOW, 'flow');
-  if (/(是什么|是啥|干什么|做什么用|介绍一下)/.test(simple) && /(阿富|健康仪|机器|设备|频率密码|这个)/.test(simple)) return passive(openid, KEFU_PRODUCT_INTRO, 'product');
+  if (kefuIsProductIntroAsk(simple)) return passive(openid, KEFU_PRODUCT_INTRO, 'product');
 
   // 体验／门店
   if (/(上门|到家)/.test(simple)) return passive(openid, KEFU_HOME_VISIT_REPLY, 'visit');
