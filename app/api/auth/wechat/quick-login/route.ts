@@ -121,14 +121,11 @@ export async function POST(request: NextRequest) {
     if (authorizeProfile && activeSession?.id) {
       const existing = findLocalCnUserById(activeSession.id);
       if (existing) {
+        // 资料更新不改推荐人。改绑只走管理员接口。
         const updated = updateLocalCnMemberProfile(existing.id, {
           name: rawNickname || existing.name,
           phone: rawPhone || undefined,
           email: rawEmail || undefined,
-          // 已绑定推荐人的会员不改绑；也不允许绑定自己的推荐码
-          referrerCode: !existing.referredByMemberId && bodyReferrerCode && bodyReferrerCode !== String(existing.referralCode || '').toUpperCase()
-            ? bodyReferrerCode
-            : undefined,
         });
         ensureLocalCnReferralLink(updated.id);
         const sessionUser = toSessionUser(updated);
@@ -188,7 +185,6 @@ export async function POST(request: NextRequest) {
         name: rawNickname || user.name,
         phone: rawPhone || undefined,
         email: rawEmail || undefined,
-        referrerCode: resolvedReferrerUser?.referralCode || resolvedReferrerCode || undefined,
       });
     } else if (rawNickname && user.name !== rawNickname) {
       user = updateLocalCnMemberProfile(user.id, { name: rawNickname });

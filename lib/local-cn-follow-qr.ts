@@ -90,7 +90,8 @@ export function parseFollowRefScene(eventKey?: string | null) {
   return code ? code : null;
 }
 
-// 首次来源绑定：先到先得，已有绑定不覆盖；推荐人须仍有推荐资格
+// 首次来源绑定：先到先得，已有绑定不覆盖；推荐人须仍有推荐资格。
+// 码主人停用／不合格时不绑定，也不改成官方直属；之后登录维持「归属待确认」，由管理员手动分配。
 export function bindFollowSource(openid: string, eventKey: string | null | undefined, event: string) {
   const code = parseFollowRefScene(eventKey);
   if (!openid || !code) return { bound: false, reason: 'no_ref_scene' };
@@ -103,7 +104,7 @@ export function bindFollowSource(openid: string, eventKey: string | null | undef
   return { bound: true, referralCode: owner.referralCode };
 }
 
-// 登录/注册时使用：该服务号 openid 的关注来源推荐码（推荐人失去资格则不用）
+// 登录/注册时使用：该服务号 openid 的关注来源推荐码（推荐人失去资格则不用，维持归属待确认，不改成官方直属）
 export function followBindingReferralCode(openid?: string | null) {
   if (!openid) return '';
   const row = readState().bindings[openid];

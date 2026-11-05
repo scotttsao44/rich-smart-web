@@ -475,6 +475,14 @@ export function referralOwnerForAttribution(memberId: number) {
   return user;
 }
 
+// 扫码／注册自动归属。码主人停用或不合格时返回 null：
+// 旧码新扫进来的人维持「归属待确认」(pending_attribution)，不要改成官方直属 RS-CN-OFFICIAL。
+// 官方直属只能由管理员手动设置（rebindLocalCnMemberReferral）。
+export function referrerEligibleForNewAttribution<T extends { id: number }>(referrer: T | null | undefined) {
+  if (!referrer || !referralOwnerForAttribution(referrer.id)) return null;
+  return referrer;
+}
+
 export function localCnPromotionQualification(user: LocalCnUser | null | undefined) {
   if (!user) return { status: 'not_found' as const, canApply: false, reason: 'member_not_found' };
   if (isLocalCnAttributionPending(user)) {
@@ -636,6 +644,141 @@ export function bindImmutableLocalCnReferral(input: {
   return { ok: true as const, member, referrer, boundAt: now };
 }
 
+export type LocalCnReferralRebindAudit = {
+  id: string;
+  memberId: number;
+  actorId: number;
+  actorName: string;
+  fromReferrerMemberId: number | null;
+  fromReferrerCode: string | null;
+  fromReferrerName: string;
+  toReferrerMemberId: number | null;
+  toReferrerCode: string;
+  toReferrerName: string;
+  officialDirect: boolean;
+  reason: string;
+  note: string;
+  createdAt: string;
+};
+
+const REFERRAL_REBIND_NOTE = '已产生的收益与结算不回溯；之后新订单按新推荐人计算';
+
+function referralRebindAuditPath() {
+  const dataDir = process.env.LOCAL_CN_DATA_DIR || path.join(process.cwd(), '.data');
+  return path.join(dataDir, 'cn-referral-rebind-audit.json');
+}
+
+function readReferralRebindAudits(): LocalCnReferralRebindAudit[] {
+  const target = referralRebindAuditPath();
+  try {
+    if (!existsSync(target)) return [];
+    const parsed = JSON.parse(readFileSync(target, 'utf8'));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function appendReferralRebindAudit(row: LocalCnReferralRebindAudit) {
+  const rows = readReferralRebindAudits();
+  rows.unshift(row);
+  const target = referralRebindAuditPath();
+  mkdirSync(path.dirname(target), { recursive: true });
+  const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temporary, JSON.stringify(rows.slice(0, 2000), null, 2), { encoding: 'utf8', mode: 0o600 });
+  renameSync(temporary, target);
+  return row;
+}
+
+export function listLocalCnReferralRebindAudits(memberId?: number | null) {
+  const rows = readReferralRebindAudits();
+  if (!memberId) return rows;
+  return rows.filter((row) => row.memberId === memberId);
+}
+
+// 仅管理员 API 调用。不改已有订单的 referralCode，也不改钱包／结算分录。
+// 新订单在下单时读取 getFrozenReferrerCode，因此只影响之后的新订单。
+export function rebindLocalCnMemberReferral(input: {
+  memberId: number;
+  actorId: number;
+  actorName?: string | null;
+  reason: string;
+  officialDirect?: boolean;
+  referrerCode?: string | null;
+  referrerMemberId?: number | null;
+}) {
+  const reason = String(input.reason || '').trim().slice(0, 500);
+  if (!reason) throw new Error('请填写改绑原因');
+  const officialDirect = input.officialDirect === true;
+  const referrerCode = explicitCnReferrerCode(input.referrerCode);
+  const referrerMemberId = Number(input.referrerMemberId || 0);
+  if (officialDirect && (referrerCode || referrerMemberId > 0)) throw new Error('设为官方直属时不要同时指定推荐人');
+  if (!officialDirect && !referrerCode && !(referrerMemberId > 0)) throw new Error('请填写新推荐码，或设为官方直属');
+  const memberId = Number(input.memberId);
+  if (!Number.isInteger(memberId) || memberId <= 0) throw new Error('找不到该会员');
+  const actorId = Number(input.actorId);
+  if (!Number.isInteger(actorId) || actorId <= 0) throw new Error('缺少操作人');
+
+  return withLocalCnUsersWriteLock(() => {
+    const users = readAll();
+    const member = users.find((user) => user.id === memberId);
+    if (!member) throw new Error('找不到该会员');
+    const fromReferrerMemberId = getFrozenReferrerMemberId(member);
+    const fromReferrer = fromReferrerMemberId ? users.find((user) => user.id === fromReferrerMemberId) || null : null;
+    const pending = isLocalCnAttributionPending(member);
+    const fromReferrerCode = pending ? null : (fromReferrer?.referralCode || member.referrerCode || null);
+    const fromReferrerName = pending
+      ? '归属待确认'
+      : (fromReferrer?.name || (fromReferrerCode === CAOMI_OFFICIAL_REFERRAL_CODE || !fromReferrerCode ? '官方直属' : String(fromReferrerCode)));
+
+    let toReferrerMemberId: number | null = null;
+    let toReferrerCode = CAOMI_OFFICIAL_REFERRAL_CODE;
+    let toReferrerName = '官方直属';
+    if (!officialDirect) {
+      const target = (referrerMemberId > 0 ? users.find((user) => user.id === referrerMemberId) : null)
+        || (referrerCode ? users.find((user) => user.referralCode.toUpperCase() === referrerCode) : null)
+        || null;
+      if (!target) throw new Error('找不到该推荐人');
+      if (target.id === member.id) throw new Error('不能把会员绑定为自己的推荐人');
+      if (wouldCreateLocalCnReferralCycle(member.id, target.id)) throw new Error('该推荐人会形成循环推荐，不能改绑');
+      toReferrerMemberId = target.id;
+      toReferrerCode = normalizeCnReferrerCode(target.referralCode);
+      toReferrerName = target.name || toReferrerCode;
+    }
+
+    const unchanged = officialDirect
+      ? !pending && !fromReferrerMemberId && normalizeCnReferrerCode(member.referrerCode) === CAOMI_OFFICIAL_REFERRAL_CODE
+      : fromReferrerMemberId === toReferrerMemberId;
+    if (unchanged) throw new Error('推荐人未变更');
+
+    if (member.referralSource === CAOMI_PENDING_ATTRIBUTION_SOURCE) member.referralSharingEnabled = true;
+    member.referredByMemberId = toReferrerMemberId;
+    member.referrerCode = toReferrerCode;
+    member.referralBoundAt = new Date().toISOString();
+    member.referralSource = officialDirect ? 'admin_official' : 'admin_rebind';
+    writeAll(users);
+
+    const audit: LocalCnReferralRebindAudit = {
+      id: `RRB-${Date.now()}-${member.id}`,
+      memberId: member.id,
+      actorId,
+      actorName: String(input.actorName || '').trim().slice(0, 80) || `会员 ${actorId}`,
+      fromReferrerMemberId,
+      fromReferrerCode,
+      fromReferrerName,
+      toReferrerMemberId,
+      toReferrerCode,
+      toReferrerName,
+      officialDirect,
+      reason,
+      note: REFERRAL_REBIND_NOTE,
+      createdAt: new Date().toISOString(),
+    };
+    appendReferralRebindAudit(audit);
+    return { member, audit };
+  });
+}
+
 export function createLocalCnInvitedMember(input: { name: string; contact: string; referrerCode: string; invitationId: string }) {
   const users = readAll();
   const now = new Date().toISOString();
@@ -734,7 +877,9 @@ export function findOrCreateLocalWechatUser(openId: string, unionId: string | nu
   while (users.some((user) => user.id === id)) id += 1;
   const now = new Date().toISOString();
   const explicitReferrerCode = explicitCnReferrerCode(referrerCode);
-  const referrer = explicitReferrerCode ? users.find((user) => user.referralCode.toUpperCase() === explicitReferrerCode) || null : null;
+  const referrer = referrerEligibleForNewAttribution(
+    explicitReferrerCode ? users.find((user) => user.referralCode.toUpperCase() === explicitReferrerCode) || null : null,
+  );
   const pendingAttribution = !referrer;
   const user: LocalCnUser = {
     id,
@@ -893,9 +1038,11 @@ export function findOrCreateLocalPhoneUser(input: {
     let id = Date.now();
     while (users.some((u) => u.id === id)) id += 1;
     const explicitRefCode = explicitCnReferrerCode(input.referrerCode);
-    const referrer = (input.referredByMemberId ? users.find((u) => u.id === input.referredByMemberId) : null)
+    const referrer = referrerEligibleForNewAttribution(
+      (input.referredByMemberId ? users.find((u) => u.id === input.referredByMemberId) : null)
       || (explicitRefCode ? users.find((u) => u.referralCode.toUpperCase() === explicitRefCode) : null)
-      || null;
+      || null,
+    );
     const pendingAttribution = !referrer;
     const suffix = normalizedPhone.slice(-4);
     const displayName = String(input.displayName || '').trim().slice(0, 80) || `手机会员${suffix}`;
@@ -949,6 +1096,7 @@ export function updateLocalCnMemberProfile(
     phone?: string;
     email?: string;
     wechatId?: string;
+    /** 忽略。推荐绑定只能由管理员改绑，会员资料更新不得改 referredBy／referrerCode。 */
     referrerCode?: string;
   },
 ) {
@@ -963,28 +1111,13 @@ export function updateLocalCnMemberProfile(
     const phone = String(input.phone || "").trim();
     const email = String(input.email || "").trim();
     const wechatId = String(input.wechatId || "").trim();
-    const referrerCode = String(input.referrerCode || "").trim().toUpperCase();
     if (name) current.name = name.slice(0, 80);
     if (avatarUrl && /^https?:\/\//.test(avatarUrl)) current.avatarUrl = avatarUrl.slice(0, 1000);
     if (store) current.store = store.slice(0, 100);
     if (phone && !phone.includes("免")) current.phone = phone.slice(0, 30);
     if (email && email.includes("@") && !email.includes("免")) current.email = email.toLowerCase().slice(0, 120);
     if (wechatId) current.wechatId = wechatId.slice(0, 80);
-    if (referrerCode) {
-      const normalizedRef = normalizeCnReferrerCode(referrerCode);
-      const refUser = users.find((u) => u.referralCode.toUpperCase() === normalizedRef && u.id !== current.id);
-      if (refUser) {
-        if (current.referralSource === CAOMI_PENDING_ATTRIBUTION_SOURCE) {
-          current.referralSource = 'member_profile_code';
-          current.referralSharingEnabled = true;
-        }
-        current.referrerCode = refUser.referralCode;
-        current.referredByMemberId = refUser.id;
-        current.referralBoundAt = current.referralBoundAt || now;
-      } else if (!isLocalCnAttributionPending(current)) {
-        current.referrerCode = normalizedRef;
-      }
-    }
+    // referrerCode／referredByMemberId／referralSource 一律不改。改绑只走 rebindLocalCnMemberReferral。
     current.profileAuthorizedAt = current.profileAuthorizedAt || now;
     current.onboardingCompletedAt = current.onboardingCompletedAt || now;
     writeAll(users);

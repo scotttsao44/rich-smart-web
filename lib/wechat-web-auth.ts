@@ -220,7 +220,8 @@ export async function finishWechatWebOAuth(request: NextRequest, kind: WechatWeb
         qrSid = String(returnUrl.searchParams.get('sid') || '').trim();
       } catch {}
       const qrSession = qrSid ? getWechatQrSession(qrSid) : null;
-      // 未填推荐码不默认官方直属：留空 → 新会员为「归属待确认」
+      // 未填推荐码不默认官方直属：留空 → 新会员为「归属待确认」。
+      // 码主人停用／不合格时，旧码仍可能留在链接上，但不得改成官方直属；建会员时维持归属待确认，由管理员手动分配。
       // 专属关注码：该服务号 openid 的关注来源绑定优先于链接 ?ref（仅服务号网页授权，openid 同一服务号）
       const followRefCode = kind === 'official' ? followBindingReferralCode(profile.openId) : '';
       const effectiveRefCode = explicitCnReferrerCode(followRefCode || referralCode || qrSession?.referrerCode || '');

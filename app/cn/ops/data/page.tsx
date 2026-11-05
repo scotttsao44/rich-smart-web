@@ -133,7 +133,7 @@ export default function PlatformDataPage() {
 
         <section className="mt-4 overflow-hidden rounded-lg border border-stone-200 bg-white">
           {loading ? <div className="p-8 text-center font-bold text-stone-500">读取中</div> : null}
-          {!loading && active === 'members' ? <div className="divide-y divide-stone-100">{overview?.members.length ? overview.members.map((member) => <div key={member.id} className="flex flex-wrap items-center justify-between gap-3 p-4"><div><div className="font-black text-stone-950">{member.name}</div><div className="mt-1 text-sm font-semibold text-stone-500">{member.phone || member.email || '未填写联系方式'} · {member.referralCode}</div></div><label className="flex items-center gap-2 text-sm font-bold text-stone-700"><input type="checkbox" checked={Boolean(member.platformAdmin)} disabled={member.id === overview.viewer?.id} onChange={(event) => setPlatformAdmin(member, event.target.checked)} />平台管理员</label></div>) : <Empty label="暂无会员" />}</div> : null}
+          {!loading && active === 'members' ? <div className="divide-y divide-stone-100">{overview?.members.length ? overview.members.map((member) => <div key={member.id} className="p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="font-black text-stone-950">{member.name}</div><div className="mt-1 text-sm font-semibold text-stone-500">{member.phone || member.email || '未填写联系方式'} · {member.referralCode}</div></div><label className="flex items-center gap-2 text-sm font-bold text-stone-700"><input type="checkbox" checked={Boolean(member.platformAdmin)} disabled={member.id === overview.viewer?.id} onChange={(event) => setPlatformAdmin(member, event.target.checked)} />平台管理员</label></div><MemberReferralEditor member={member} onUpdated={(next) => setOverview((current) => current ? { ...current, members: current.members.map((item) => item.id === next.id ? { ...item, ...next } : item) } : current)} /></div>) : <Empty label="暂无会员" />}</div> : null}
           {!loading && active === 'brands' ? <Rows kind="brands" rows={overview?.brands || []} primary="brandName" secondary="companyName" status="status" empty="暂无品牌申请" /> : null}
           {!loading && active === 'products' ? <Rows kind="products" rows={overview?.products || []} primary="name" secondary="brandName" status="status" empty="暂无商品" /> : null}
           {!loading && active === 'stores' ? <Rows kind="stores" rows={overview?.stores || []} primary="name" secondary="address" status="status" empty="暂无门店申请" /> : null}
@@ -153,6 +153,60 @@ export default function PlatformDataPage() {
 }
 
 function Empty({ label }: { label: string }) { return <div className="p-8 text-center font-bold text-stone-500">{label}</div>; }
+
+function attributionText(member: Record<string, any>) {
+  const pending = member.referralSource === 'pending_attribution' && !(Number(member.referredByMemberId) > 0);
+  if (pending) return '归属待确认';
+  if (member.referrerCode && member.referrerCode !== 'RS-CN-OFFICIAL') {
+    return member.referrerName ? `${member.referrerName} · ${member.referrerCode}` : String(member.referrerCode);
+  }
+  return '官方直属';
+}
+
+function MemberReferralEditor({ member, onUpdated }: { member: Record<string, any>; onUpdated: (member: Record<string, any>) => void }) {
+  const [code, setCode] = useState('');
+  const [reason, setReason] = useState('');
+  const [message, setMessage] = useState('');
+  const [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const submit = async (officialDirect: boolean) => {
+    const trimmed = reason.trim();
+    if (!trimmed) { setFailed(true); setMessage('请填写原因'); return; }
+    if (!officialDirect && !code.trim()) { setFailed(true); setMessage('请填写新推荐码，或设为官方直属'); return; }
+    setBusy(true);
+    setMessage('');
+    setFailed(false);
+    try {
+      const response = await fetch('/api/cn/ops/referral-rebind', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: member.id, reason: trimmed, officialDirect, referrerCode: officialDirect ? undefined : code.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) { setFailed(true); setMessage(data.error || '改绑失败'); return; }
+      setFailed(false);
+      setMessage(data.message || '已保存');
+      setCode('');
+      onUpdated(data.member);
+    } catch {
+      setFailed(true);
+      setMessage('改绑失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="mt-3 border-t border-stone-100 pt-3">
+    <div className="text-xs font-bold text-stone-500">当前推荐人：{attributionText(member)}</div>
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <input aria-label={`${member.name}的新推荐码`} className="h-9 min-w-[10rem] flex-1 rounded border border-stone-300 px-2 text-sm" placeholder="新推荐码" value={code} onChange={(event) => setCode(event.target.value)} />
+      <input aria-label={`${member.name}的改绑原因`} className="h-9 min-w-[10rem] flex-1 rounded border border-stone-300 px-2 text-sm" placeholder="原因（必填）" value={reason} onChange={(event) => setReason(event.target.value)} />
+      <button type="button" disabled={busy} onClick={() => submit(false)} className="h-9 rounded bg-teal-700 px-3 text-xs font-black text-white disabled:opacity-50">改绑推荐人</button>
+      <button type="button" disabled={busy} onClick={() => submit(true)} className="h-9 rounded border border-stone-400 bg-white px-3 text-xs font-black text-stone-800 disabled:opacity-50">设为官方直属</button>
+    </div>
+    <p className="mt-2 text-xs font-semibold leading-5 text-stone-500">已产生的收益与结算不回溯，之后的新订单按新推荐人计算。</p>
+    {message ? <p className={`mt-1 text-xs font-bold ${failed ? 'text-red-700' : 'text-teal-800'}`}>{message}</p> : null}
+  </div>;
+}
 
 const detailFields = {
   brands: [
