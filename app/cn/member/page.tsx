@@ -42,7 +42,7 @@ type ReferralEngagement = {
   metrics?: Record<string, any>;
   details?: Record<string, WorkspaceRow[]>;
   members?: WorkspaceRow[];
-  wakeup?: { coverUrl?: string; linkTitle?: string; wechatMedia?: 'article' | 'image' | 'none'; templateFallback?: boolean };
+  wakeup?: { coverUrl?: string; linkTitle?: string; themeLabel?: string; wechatMedia?: 'article' | 'image' | 'news' | 'none'; templateFallback?: boolean };
 };
 type PromotionQualification = {
   status?: 'not_applied' | 'granted' | 'disabled' | 'not_found';
@@ -184,7 +184,7 @@ export default function ChinaMemberDashboardPage() {
   const selectedRows = engagementMembers.filter((row) => selectedReferralMembers.includes(Number(row.id)));
   const previewText = (template: ReferralTemplate, recipient: WorkspaceRow) => {
     if (template === 'appointment') return recipient.appointmentPreview || `Hi ${recipient.name}，你还没有完成门店预约。我在富智慧帮你留意了入口，回来后可以继续预约体验。`;
-    return recipient.winbackPreview || `Hi ${recipient.name}，最近有新的健康服务和商品可以看看。有空回来看看你的会员中心。`;
+    return recipient.winbackPreview || `Hi ${recipient.name}，转发给朋友前，先生成你的专属二维码，朋友扫码关注就记在你名下。`;
   };
 
   const copyReferralLink = async () => {
@@ -965,15 +965,16 @@ export default function ChinaMemberDashboardPage() {
                     <p className="mt-1 text-xs font-bold leading-5 text-stone-500">
                       渠道：站内通知（{preview.recipients.length} 人）
                       {wechatCount
-                        ? ` + 服务号消息（已绑定服务号 ${wechatCount} 人，文字${wakeup.wechatMedia === 'article' ? ' + 图文' : wakeup.wechatMedia === 'image' ? ' + 图片' : ''}）。对方超过 48 小时未与服务号互动时${wakeup.templateFallback ? '改发模板消息' : '服务号消息会失败，只保留站内通知并记录原因'}。`
+                        ? ` + 服务号消息（已绑定服务号 ${wechatCount} 人，文字${wakeup.wechatMedia === 'article' ? ' + 图文' : wakeup.wechatMedia === 'image' ? ' + 图片' : wakeup.wechatMedia === 'news' ? ' + 封面链接卡片' : ''}）。对方超过 48 小时未与服务号互动时${wakeup.templateFallback ? '改发模板消息' : '服务号消息会失败，只保留站内通知并记录原因'}。`
                         : '。所选成员都未绑定服务号，本次只发站内通知。'}
                     </p>
-                    {wakeup.coverUrl ? (
+                    {preview.template === 'winback' ? <p className="mt-2 text-xs font-bold leading-5 text-teal-800">素材按日期轮换（转发拉人 / 预约体验 / 体验点导航 / 健康好物 / 门店合作），同一人不会连续收到同一主题；店主偏合作与转发，沉睡会员偏预约与体验。</p> : null}
+                    {preview.template === 'winback' ? null : (
                       <div className="mt-3 overflow-hidden rounded-lg border border-stone-200">
-                        <img src={wakeup.coverUrl} alt="通知封面预览" className="aspect-[900/383] w-full object-cover" />
-                        <div className="px-3 py-2 text-xs font-bold text-stone-500">封面预览 · 链接：{wakeup.linkTitle || '最新内容'}</div>
+                        <img src="/images/mp/wakeup-appointment-cover.jpg" alt="通知封面预览" className="aspect-[900/383] w-full object-cover" />
+                        <div className="px-3 py-2 text-xs font-bold text-stone-500">封面预览 · 链接：预约到店体验</div>
                       </div>
-                    ) : null}
+                    )}
                   </>
                 );
               })()}
@@ -984,6 +985,12 @@ export default function ChinaMemberDashboardPage() {
                 {preview.recipients.map((row) => (
                   <div key={row.id} className="rounded-lg bg-stone-50 p-3">
                     <div className="font-black text-stone-950">{row.name} · memberId {row.memberId}{row.hasWechat === true ? ' · 服务号' : ''}</div>
+                    {preview.template === 'winback' && row.winbackTheme?.coverUrl ? (
+                      <div className="mt-2 overflow-hidden rounded-lg border border-stone-200 bg-white">
+                        <img src={row.winbackTheme.coverUrl} alt="封面预览" className="aspect-[900/383] w-full object-cover" />
+                        <div className="px-3 py-1.5 text-xs font-bold text-stone-500">今日主题：{row.winbackTheme.label} · 链接：{row.winbackTheme.linkTitle}</div>
+                      </div>
+                    ) : null}
                     <div className="mt-2 text-sm font-semibold leading-6 text-stone-600">{previewText(preview.template, row)}</div>
                   </div>
                 ))}

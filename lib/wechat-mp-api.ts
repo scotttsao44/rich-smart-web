@@ -74,6 +74,11 @@ export function sendMpCustomArticle(openid: string, articleId: string) {
   return postWithToken('/cgi-bin/message/custom/send', { touser: openid, msgtype: 'mpnewsarticle', mpnewsarticle: { article_id: articleId } });
 }
 
+// 客服图文链接卡片（单条，外链 + 封面 picurl），用于一键唤醒的转发 / 预约 / 导航素材
+export function sendMpCustomNews(openid: string, article: { title: string; description: string; url: string; picurl: string }) {
+  return postWithToken('/cgi-bin/message/custom/send', { touser: openid, msgtype: 'news', news: { articles: [article] } });
+}
+
 export function sendMpTemplate(openid: string, templateId: string, url: string, data: Record<string, string>) {
   const payload: Record<string, { value: string }> = {};
   for (const [k, v] of Object.entries(data)) payload[k] = { value: v };

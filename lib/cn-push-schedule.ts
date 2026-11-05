@@ -4,7 +4,8 @@ import path from 'path';
 import { confirmedRecentIncome, listMemberTiersForPush, readWakeupAssets } from './local-cn-referral-engagement';
 import { adminNotifyOpenids, escalateUnconfirmed, isSimulatedOpenid, lastInteractionAt, listOptedInOwners, ownerNoticesSince, windowStatus } from './local-cn-store-owners';
 import { findLocalCnUserById, getFrozenReferrerCode, listLocalCnUsers, normalizeCnReferrerCode, type LocalCnUser } from './local-cn-users';
-import { sendMpCustomArticle, sendMpCustomImage, sendMpCustomText } from './wechat-mp-api';
+import { sendMpCustomArticle, sendMpCustomImage, sendMpCustomNews, sendMpCustomText } from './wechat-mp-api';
+import { pickWakeupTheme, wakeupScheduleLine, type WakeupTheme } from './cn-wakeup-themes';
 import { wecomContactForMember } from './local-cn-wecom';
 import { addMsgTemplate } from './wecom-api';
 
@@ -30,7 +31,7 @@ const RULES: Record<Exclude<Tier, 'owner'>, { intervalDays: number; maxStreak?: 
 const MANUAL_COOLDOWN_MS = 2 * 86400000;
 const BATCH_LIMIT = 100;
 
-type SendRecord = { memberId: number; at: string; tier: Tier; status: string; channel: string; errcode?: string; test?: boolean };
+type SendRecord = { memberId: number; at: string; tier: Tier; status: string; channel: string; errcode?: string; test?: boolean; theme?: string };
 type ScheduleState = {
   schemaVersion: 1;
   sends: SendRecord[];
@@ -99,8 +100,19 @@ function callName(member: LocalCnUser | null) {
   return n && !n.startsWith('微信会员') && !n.startsWith('微信用户') ? n : '你好';
 }
 
+// 按日期轮换素材主题（店主偏门店合作 / 转发；沉睡偏预约 / 体验），并避开上次发给此人的主题
+function themeFor(member: LocalCnUser | null, tier: Tier): WakeupTheme {
+  const segment = tier === 'owner' ? 'owner' : tier === 'sleeping' ? 'sleeping' : 'default';
+  const last = member ? readState().sends.filter((s) => s.memberId === member.id && s.status === 'sent' && !s.test && s.theme).map((s) => ({ at: s.at, theme: s.theme })).sort((a, b) => a.at.localeCompare(b.at)).pop()?.theme : null;
+  return pickWakeupTheme(segment, readWakeupAssets(), new Date(), last || null);
+}
+
+function themeLink(member: LocalCnUser | null, theme: WakeupTheme) {
+  return theme.withRef ? linkFor(member, theme.linkUrl) : theme.linkUrl;
+}
+
 export function ownerDigestText(member: LocalCnUser | null, tag = '') {
-  const assets = readWakeupAssets();
+  const theme = themeFor(member, 'owner');
   const today = member ? ownerNoticesSince(member.id, shanghaiDayStart()) : [];
   const date = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
   const leadLines = today.slice(-5).map((n) => `· ${n.city || '未提供城市'}｜手机尾号 ${n.phoneTail || '—'}${n.ackAt ? '（已确认）' : ''}`);
@@ -110,33 +122,37 @@ export function ownerDigestText(member: LocalCnUser | null, tag = '') {
     `今日新线索：${today.length} 条`,
     ...leadLines,
     `近 7 天已确认收益：${money(income)}（仅你本人可见）`,
-    `今日素材：${assets.linkTitle}`,
-    linkFor(member, assets.linkUrl),
+    `今日可转发素材：${theme.label}｜${wakeupScheduleLine(theme)}`,
+    themeLink(member, theme),
     '回复「收到」确认，明天继续为你推送简报。',
   ].join('\n');
 }
 
 function wakeText(member: LocalCnUser, tier: Exclude<Tier, 'owner'>, tag = '') {
-  const assets = readWakeupAssets();
-  const link = linkFor(member, assets.linkUrl);
+  const theme = themeFor(member, tier);
+  const link = themeLink(member, theme);
   const name = callName(member);
-  if (tier === 'active') return `${tag}${name}，本周新内容：${assets.linkTitle}\n${link}\n${FOLLOW_QR_HINT}`;
-  if (tier === 'sleeping') return `${tag}${name}，富智慧给你留了一份新内容：${assets.linkTitle}\n${link}\n${FOLLOW_QR_HINT}\n不想再收到此类提醒，回复「退订」即可。`;
-  return `${tag}${name}，好久不见。最近有新内容：${assets.linkTitle}\n${link}\n${FOLLOW_QR_HINT}\n想了解附近体验点，直接回复所在城市即可。`;
+  const hint = theme.hint ? `\n${FOLLOW_QR_HINT}` : '';
+  const line = wakeupScheduleLine(theme);
+  if (tier === 'active') return `${tag}${name}，${line}\n${link}${hint}`;
+  if (tier === 'sleeping') return `${tag}${name}，好久不见。${line}\n${link}${hint}\n不想再收到此类提醒，回复「退订」即可。`;
+  return `${tag}${name}，${line}\n${link}${hint}\n想了解附近体验点，直接回复所在城市即可。`;
 }
 
-async function sendRich(openid: string, text: string, withMedia: boolean) {
+async function sendRich(openid: string, text: string, withMedia: boolean, theme?: WakeupTheme, link?: string) {
   if (isSimulatedOpenid(openid)) return { channel: 'custom', status: 'simulated' as const };
   const r = await sendMpCustomText(openid, text);
   if (!r.ok) return { channel: 'custom', status: 'failed' as const, errcode: String(r.errcode) };
-  const assets = readWakeupAssets();
   let channel = 'custom';
-  if (withMedia && assets.articleId) {
-    const a = await sendMpCustomArticle(openid, assets.articleId);
+  if (withMedia && theme?.articleId) {
+    const a = await sendMpCustomArticle(openid, theme.articleId);
     if (a.ok) channel += '+article';
-  } else if (withMedia && assets.coverMediaId) {
-    const i = await sendMpCustomImage(openid, assets.coverMediaId);
+  } else if (withMedia && theme?.coverMediaId) {
+    const i = await sendMpCustomImage(openid, theme.coverMediaId);
     if (i.ok) channel += '+image';
+  } else if (withMedia && theme && link) {
+    const n = await sendMpCustomNews(openid, { title: theme.linkTitle, description: wakeupScheduleLine(theme).replace(/[：:]$/, ''), url: link, picurl: new URL(theme.coverUrl, 'https://rich-smart.com.cn').toString() });
+    if (n.ok) channel += '+news';
   }
   return { channel, status: 'sent' as const, errcode: '0' };
 }
@@ -226,7 +242,8 @@ export async function runPushSchedule(opts: { task?: string; dryRun?: boolean; t
     const testOpenid = String(opts.testOpenid);
     if (!adminNotifyOpenids().includes(testOpenid)) return { ...result, test: { ok: false, reason: 'testOpenid 必须在 KEFU_NOTIFY_OPENIDS 内' } };
     const self = listLocalCnUsers().find((u) => u.wechatOfficialOpenId === testOpenid) || null;
-    const r = await sendRich(testOpenid, ownerDigestText(self, '【测试】'), true);
+    const testTheme = themeFor(self, 'owner');
+    const r = await sendRich(testOpenid, ownerDigestText(self, '【测试】'), true, testTheme, themeLink(self, testTheme));
     const state = readState();
     state.sends.push({ memberId: self?.id || 0, at: new Date().toISOString(), tier: 'owner', status: r.status, channel: r.channel, errcode: r.errcode, test: true });
     state.runs.push({ at: new Date().toISOString(), task: `${task}:test`, dryRun: true, live: false, summary });
@@ -240,11 +257,12 @@ export async function runPushSchedule(opts: { task?: string; dryRun?: boolean; t
       const user = findLocalCnUserById(row.memberId);
       const openid = String(user?.wechatOfficialOpenId || '');
       if (!user || (!openid && row.channel !== 'wecom')) continue;
+      const theme = themeFor(user, row.tier);
       const text = row.tier === 'owner' ? ownerDigestText(user) : wakeText(user, row.tier as Exclude<Tier, 'owner'>);
-      const r = row.channel === 'wecom' ? await sendWecom(row.memberId, text) : await sendRich(openid, text, true);
+      const r = row.channel === 'wecom' ? await sendWecom(row.memberId, text) : await sendRich(openid, text, true, theme, themeLink(user, theme));
       sent.push({ memberId: row.memberId, tier: row.tier, status: r.status, channel: r.channel, errcode: r.errcode });
       const state = readState();
-      state.sends.push({ memberId: row.memberId, at: new Date().toISOString(), tier: row.tier, status: r.status, channel: r.channel, errcode: r.errcode });
+      state.sends.push({ memberId: row.memberId, at: new Date().toISOString(), tier: row.tier, status: r.status, channel: r.channel, errcode: r.errcode, theme: theme.key });
       if (r.status === 'sent' && row.tier !== 'owner') {
         const key = String(row.memberId);
         const prev = state.streaks[key];
