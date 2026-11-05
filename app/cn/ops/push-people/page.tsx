@@ -18,6 +18,8 @@ type Data = {
 type WecomRow = { memberId: number; name: string; role: string; bound: boolean; window: Win; wecomAdded: boolean; wecomAddedAt: string | null; lastInvite: { at: string; status: string } | null; inviteQr: string | null };
 type Wecom = { configured: boolean; callbackConfigured: boolean; count: number; cap: number; unmatched: number; defaultQr: { qrCode: string; createdAt: string } | null; syncedAt: string | null; inviteText: string; rows: WecomRow[] };
 type InviteResult = { memberId: number; name: string; status: string; label: string; qrCode?: string };
+type PosterElig = { memberId: number; eligible: boolean; reason: string; referralCode?: string };
+type PosterPreview = { memberId: number; name: string; referralCode: string; stamp: number };
 const INVITE_STATUS: Record<string, string> = { sent: '已发送', unreachable: '无法触达', failed: '失败', simulated: '模拟', already_added: '已加', cap_reached: '已达上限' };
 
 const STATUS: Record<string, string> = { sent: '已送达', failed: '发送失败', simulated: '模拟', no_openid: '未绑定', not_enabled: '未开启', member_not_found: '会员不存在', pending: '发送中' };
@@ -31,6 +33,32 @@ function t(value?: string | null) {
 function noticeText(n: Notice | null) {
   if (!n) return '暂无';
   return `${t(n.at)} · ${EVENT[n.event] || n.event} · ${STATUS[n.status] || n.status}${n.errcode && n.errcode !== '0' ? `（${n.errcode}）` : ''} · ${n.channel}${n.ackAt ? ' · 已确认' : n.escalatedAt ? ' · 已升级曹总' : ''}`;
+}
+
+/** 同 follow-qr 页：fetch→blob→objectURL 塞进 <img>，避免微信把 API URL 当附件「接收文件」（0B）。 */
+function useBlobObjectUrl(url: string) {
+  const [src, setSrc] = useState('');
+  const [failed, setFailed] = useState('');
+  useEffect(() => {
+    setSrc(''); setFailed('');
+    if (!url) return;
+    let alive = true;
+    let objectUrl = '';
+    (async () => {
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) { const b = await res.json().catch(() => ({})); if (alive) setFailed(b.error || '长图加载失败'); return; }
+        const blob = await res.blob();
+        if (!alive) return;
+        objectUrl = URL.createObjectURL(blob);
+        setSrc(objectUrl);
+      } catch {
+        if (alive) setFailed('长图加载失败，请重试');
+      }
+    })();
+    return () => { alive = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [url]);
+  return { src, failed };
 }
 
 export default function PushPeoplePage() {
@@ -49,6 +77,10 @@ export default function PushPeoplePage() {
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
   const [wecomBusy, setWecomBusy] = useState('');
   const [wecomMsg, setWecomMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [posterElig, setPosterElig] = useState<Record<number, PosterElig>>({});
+  const [posterBusy, setPosterBusy] = useState(0);
+  const [posterPreview, setPosterPreview] = useState<PosterPreview | null>(null);
+  const posterImg = useBlobObjectUrl(posterPreview ? `/api/cn/ops/referral-poster?memberId=${posterPreview.memberId}&t=${posterPreview.stamp}` : '');
   const [plan, setPlan] = useState<{ summary: Record<string, number>; plan: Array<{ memberId: number; name: string; tierLabel: string; action: string; reason: string; channel?: string }> } | null>(null);
 
   const load = useCallback(async () => {
@@ -75,6 +107,39 @@ export default function PushPeoplePage() {
   const refresh = async () => {
     setRefreshing(true);
     try { await Promise.all([load(), loadWecom()]); setRefreshedAt(new Date()); } finally { setRefreshing(false); }
+  };
+
+  const posterIds = Array.from(new Set([...(data?.owners || []).map((o) => o.memberId), ...(wecom?.rows || []).map((r) => r.memberId)])).sort((a, b) => a - b).join(',');
+  useEffect(() => {
+    if (!posterIds) return;
+    (async () => {
+      const response = await fetch(`/api/cn/ops/referral-poster?memberIds=${posterIds}`, { cache: 'no-store' });
+      const body = await response.json().catch(() => ({}));
+      if (response.ok) setPosterElig(Object.fromEntries((body.rows || []).map((r: PosterElig) => [r.memberId, r])));
+    })();
+  }, [posterIds]);
+
+  const generatePoster = async (memberId: number, name: string) => {
+    setPosterBusy(memberId);
+    setError('');
+    try {
+      const response = await fetch('/api/cn/ops/referral-poster', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ memberId }) });
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 401) { setDenied(true); return; }
+      if (!response.ok) setError(`${name}（${memberId}）：${body.error || '推广长图生成失败'}`);
+      else setPosterPreview({ memberId, name, referralCode: body.referralCode || '', stamp: Date.now() });
+    } catch {
+      setError('网络异常，请稍后再试');
+    } finally {
+      setPosterBusy(0);
+    }
+  };
+
+  const posterCell = (memberId: number, name: string) => {
+    const e = posterElig[memberId];
+    if (!e) return <span className="text-xs text-stone-400">检查中…</span>;
+    if (!e.eligible) return <div><button type="button" disabled className="rounded border border-stone-200 px-2 py-0.5 text-xs font-bold text-stone-400">代生成推广长图</button><div className="mt-0.5 text-xs text-amber-700">{e.reason}</div></div>;
+    return <button type="button" onClick={() => generatePoster(memberId, name)} disabled={Boolean(posterBusy)} className="rounded border border-teal-600 px-2 py-0.5 text-xs font-bold text-teal-800 disabled:opacity-50">{posterBusy === memberId ? '生成中…' : '代生成推广长图'}</button>;
   };
 
   const wecomOf = (memberId: number) => wecom?.rows.find((r) => r.memberId === memberId) || null;
@@ -178,7 +243,7 @@ export default function PushPeoplePage() {
         <section className="mt-6 overflow-x-auto rounded-lg border border-stone-200 bg-white" data-testid="push-owners">
           <h2 className="border-b border-stone-100 px-4 py-3 font-black">店主／体验点负责人（{data?.owners.length ?? 0}）</h2>
           <table className="w-full min-w-[860px] text-left text-sm">
-            <thead className="bg-stone-50 text-xs text-stone-500"><tr><th className="px-2 py-2"><span className="sr-only">选择</span></th><th className="px-4 py-2">会员</th><th className="px-4 py-2">负责</th><th className="px-4 py-2">通知</th><th className="px-4 py-2">服务号</th><th className="px-4 py-2">48 小时窗口</th><th className="px-4 py-2">企业微信</th><th className="px-4 py-2">最近通知</th></tr></thead>
+            <thead className="bg-stone-50 text-xs text-stone-500"><tr><th className="px-2 py-2"><span className="sr-only">选择</span></th><th className="px-4 py-2">会员</th><th className="px-4 py-2">负责</th><th className="px-4 py-2">通知</th><th className="px-4 py-2">服务号</th><th className="px-4 py-2">48 小时窗口</th><th className="px-4 py-2">企业微信</th><th className="px-4 py-2">最近通知</th><th className="px-4 py-2">推广长图</th></tr></thead>
             <tbody>
               {(data?.owners || []).map((o) => (
                 <tr key={o.memberId} className="border-t border-stone-100">
@@ -190,9 +255,10 @@ export default function PushPeoplePage() {
                   <td className="px-4 py-2">{o.window.open ? <span className="text-teal-700">{o.window.label}</span> : <span className="text-stone-500">{o.window.label}</span>}</td>
                   <td className="px-4 py-2">{wecomCell(o.memberId)}</td>
                   <td className="px-4 py-2 text-xs">{noticeText(o.lastNotice)}</td>
+                  <td className="px-4 py-2">{posterCell(o.memberId, o.name)}</td>
                 </tr>
               ))}
-              {data && !data.owners.length ? <tr><td colSpan={8} className="px-4 py-4 text-stone-500">暂无店主。可在下方为体验点指定负责人会员 ID，或等门店申请开通后自动列入。</td></tr> : null}
+              {data && !data.owners.length ? <tr><td colSpan={9} className="px-4 py-4 text-stone-500">暂无店主。可在下方为体验点指定负责人会员 ID，或等门店申请开通后自动列入。</td></tr> : null}
             </tbody>
           </table>
         </section>
@@ -243,7 +309,7 @@ export default function PushPeoplePage() {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-left text-sm" data-testid="wecom-rows">
-                <thead className="bg-stone-50 text-xs text-stone-500"><tr><th className="px-2 py-2"><span className="sr-only">选择</span></th><th className="px-3 py-2">会员</th><th className="px-3 py-2">分层</th><th className="px-3 py-2">48 小时窗口</th><th className="px-3 py-2">企业微信</th></tr></thead>
+                <thead className="bg-stone-50 text-xs text-stone-500"><tr><th className="px-2 py-2"><span className="sr-only">选择</span></th><th className="px-3 py-2">会员</th><th className="px-3 py-2">分层</th><th className="px-3 py-2">48 小时窗口</th><th className="px-3 py-2">企业微信</th><th className="px-3 py-2">推广长图</th></tr></thead>
                 <tbody>
                   {(wecom?.rows || []).map((r) => (
                     <tr key={r.memberId} className="border-t border-stone-100">
@@ -252,9 +318,10 @@ export default function PushPeoplePage() {
                       <td className="px-3 py-2">{r.role}</td>
                       <td className="px-3 py-2">{r.window.open ? <span className="text-teal-700">{r.window.label}</span> : <span className="text-stone-500">{r.window.label}</span>}</td>
                       <td className="px-3 py-2">{wecomCell(r.memberId)}</td>
+                      <td className="px-3 py-2">{posterCell(r.memberId, r.name)}</td>
                     </tr>
                   ))}
-                  {wecom && !wecom.rows.length ? <tr><td colSpan={5} className="px-3 py-4 text-stone-500">暂无已绑定服务号的会员</td></tr> : null}
+                  {wecom && !wecom.rows.length ? <tr><td colSpan={6} className="px-3 py-4 text-stone-500">暂无已绑定服务号的会员</td></tr> : null}
                 </tbody>
               </table>
               <p className="mt-2 text-xs text-stone-500">勾选后点「邀请加企业微信」：48 小时内与服务号互动过的会员会收到文字＋专属二维码（扫码添加后自动对应会员）；其余标记「无法触达（超过48小时）」，可复制邀请内容或下载二维码手动转发。</p>
@@ -335,6 +402,29 @@ export default function PushPeoplePage() {
         </section>
         </>}
       </div>
+      {posterPreview ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4" data-testid="ops-poster-preview" onClick={() => setPosterPreview(null)}>
+          <div className="w-full max-w-md rounded-lg bg-white p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-black">{posterPreview.name}（{posterPreview.memberId}）的推广长图</div>
+                <div className="mt-1 text-xs font-semibold text-stone-500">三个码都带 TA 的推荐码 {posterPreview.referralCode}。系统不会自动发送，请保存后在企业微信私聊手动发给 TA。</div>
+              </div>
+              <button type="button" onClick={() => setPosterPreview(null)} className="rounded border border-stone-300 px-2 py-0.5 text-xs font-bold">关闭</button>
+            </div>
+            {posterImg.src ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={posterImg.src} alt={`${posterPreview.name}的推广长图`} width={1080} draggable={false} className="mt-3 block w-full select-none rounded border border-stone-100" />
+                <div className="mt-2 text-center text-sm font-bold text-teal-800">长按图片保存到相册</div>
+                {inWechat ? null : <div className="mt-2 text-center"><a href={posterImg.src} download={`推广长图-${posterPreview.memberId}-${posterPreview.referralCode}.png`} className="inline-block rounded-lg border border-teal-600 px-3 py-1.5 text-xs font-bold text-teal-800">下载图片</a></div>}
+              </>
+            ) : (
+              <div className="mt-3 rounded border border-dashed border-stone-200 py-16 text-center text-sm text-stone-500">{posterImg.failed || '长图加载中…'}</div>
+            )}
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
