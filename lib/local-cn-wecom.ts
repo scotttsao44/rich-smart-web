@@ -12,6 +12,11 @@ import { sendMpCustomImage, sendMpCustomText, uploadMpTempImage } from './wechat
 //                         referrers[会员 id]（推广长图用，state=推荐码前 30 字符；加好友时记推荐人，先到先得）
 //   wecom-customers.json  外部联系人（回调 add/del 与手动同步写入）、会员对应（已加企业微信）、邀请记录
 // 企业未认证：客户上限 100 人（WECOM_CUSTOMER_CAP 可调）。
+// 会员专属企微邀请码（members[会员 id]，state=m<会员 id>）：客户扫码加企微后只写 wecom-customers 的 memberId（企微客户↔网站会员对应），
+//   不改推荐人绑定、不改推广资格；推荐码 state（referrers）维持只记推荐人。对应先到先得：已对应的外部联系人不改对应；
+//   同一会员已对应另一位在册客户时，新客户不自动对应（避免会员把自己的码转给朋友而错配），记 matchConflictMemberId 供后台人工核对。
+// 欢迎语由企微后台负责，本程式不调用 send_welcome_msg。
+// 群规则：客户 Richard Tsao 与 Elaine 星已标「互相隔离」，任何自动拉群都不得把两人放进同一个群（目前无自动拉群程式；见 docs/03-進度.md）。
 
 export const WECOM_CUSTOMER_CAP = Number(process.env.WECOM_CUSTOMER_CAP || 100);
 const DEFAULT_MEMBER_NAME = '曹哲魁';
@@ -40,6 +45,8 @@ export type WecomCustomer = {
   referrerCode?: string;
   referrerMemberId?: number;
   referredAt?: string;
+  // 会员邀请码 state=m<id> 指向的会员已对应其他客户时记下，供人工核对；不自动对应
+  matchConflictMemberId?: number;
   status: 'active' | 'deleted';
   addedAt: string;
   updatedAt: string;
@@ -155,6 +162,13 @@ export async function ensureMemberContactWay(memberId: number) {
   return way;
 }
 
+// 后台「生成企微邀请码」：只生成／读取会员专属码（state=m<会员 id>），不发送任何消息
+export async function ensureMemberInviteQr(memberId: number) {
+  if (!Number.isInteger(memberId) || memberId <= 0 || !findLocalCnUserById(memberId)) throw new Error('会员不存在');
+  if (!wecomConfigured()) throw new Error('企业微信未配置');
+  return ensureMemberContactWay(memberId);
+}
+
 // 推广长图：该会员（推荐人）专属「联系我」码，state=推荐码（≤30 字符），接待成员同默认（曹哲魁）
 export async function ensureReferrerContactWay(memberId: number, referralCode: string) {
   const state = String(referralCode || '').trim().toUpperCase().slice(0, 30);
@@ -209,9 +223,15 @@ function upsertCustomer(s: CustomerState, externalUserId: string, contact: { nam
   const followUsers = follows.map((f) => ({ userid: String(f.userid), state: String(f.state || ''), createtime: Number(f.createtime || 0) }));
   const state = followUsers.map((f) => f.state).find((st) => memberIdFromState(st)) || followUsers.map((f) => f.state).find(Boolean) || prev?.state || '';
   const unionid = String(contact?.unionid || prev?.unionid || '');
-  const byState = followUsers.map((f) => memberIdFromState(f.state)).find((id) => id) || null;
-  const byUnion = byState ? null : memberIdFromUnionid(unionid);
-  const memberId = byState || byUnion || prev?.memberId || null;
+  // 先到先得：已对应会员的外部联系人不改对应
+  const prevMemberId = prev?.memberId || null;
+  const stateMemberId = prevMemberId ? null : followUsers.map((f) => memberIdFromState(f.state)).find((id) => id) || null;
+  // 一位会员只自动对应一位在册客户：该会员已对应其他客户时不自动对应，记冲突待人工核对
+  const takenBy = (id: number) => Object.values(s.customers).some((x) => x.externalUserId !== externalUserId && x.status === 'active' && x.memberId === id);
+  const conflict = stateMemberId && takenBy(stateMemberId) ? stateMemberId : null;
+  const byState = conflict ? null : stateMemberId;
+  const byUnion = prevMemberId || byState ? null : memberIdFromUnionid(unionid);
+  const memberId = prevMemberId || byState || byUnion || null;
   const first = followUsers.map((f) => f.createtime).filter(Boolean).sort()[0];
   s.customers[externalUserId] = {
     externalUserId,
@@ -220,7 +240,7 @@ function upsertCustomer(s: CustomerState, externalUserId: string, contact: { nam
     state,
     followUsers,
     memberId,
-    matchedBy: byState ? 'state' : byUnion ? 'unionid' : prev?.matchedBy || null,
+    matchedBy: prevMemberId ? prev?.matchedBy || null : byState ? 'state' : byUnion ? 'unionid' : null,
     status: followUsers.length ? 'active' : 'deleted',
     addedAt: prev?.addedAt || (first ? new Date(first * 1000).toISOString() : now),
     updatedAt: now,
@@ -228,6 +248,7 @@ function upsertCustomer(s: CustomerState, externalUserId: string, contact: { nam
     referrerCode: prev?.referrerCode,
     referrerMemberId: prev?.referrerMemberId,
     referredAt: prev?.referredAt,
+    matchConflictMemberId: memberId ? undefined : conflict || prev?.matchConflictMemberId,
   };
   return s.customers[externalUserId];
 }

@@ -164,6 +164,23 @@ export default function PushPeoplePage() {
     }
   };
 
+  // 只生成会员专属企微邀请码（state=m<会员 id>），不发送；客户扫此码加企微后自动对应该会员
+  const memberQr = async (memberId: number) => {
+    setWecomBusy(`qr${memberId}`);
+    setWecomMsg(null);
+    try {
+      const response = await fetch('/api/cn/ops/wecom', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'member-qr', memberId }) });
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 401 || response.status === 403) { setDenied(true); return; }
+      if (!response.ok) setWecomMsg({ ok: false, text: body.error || '生成失败' });
+      else { if (body.overview) setWecom(body.overview); setWecomMsg({ ok: true, text: `会员 ${memberId} 的企微邀请码已生成（未发送）` }); }
+    } catch {
+      setWecomMsg({ ok: false, text: '网络异常，请稍后再试' });
+    } finally {
+      setWecomBusy('');
+    }
+  };
+
   const invite = async () => {
     const ids = Array.from(selected).filter((id) => !wecomOf(id)?.wecomAdded);
     if (!ids.length) { setError('请勾选尚未添加企业微信的会员'); return; }
@@ -309,7 +326,7 @@ export default function PushPeoplePage() {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[640px] text-left text-sm" data-testid="wecom-rows">
-                <thead className="bg-stone-50 text-xs text-stone-500"><tr><th className="px-2 py-2"><span className="sr-only">选择</span></th><th className="px-3 py-2">会员</th><th className="px-3 py-2">分层</th><th className="px-3 py-2">48 小时窗口</th><th className="px-3 py-2">企业微信</th><th className="px-3 py-2">推广长图</th></tr></thead>
+                <thead className="bg-stone-50 text-xs text-stone-500"><tr><th className="px-2 py-2"><span className="sr-only">选择</span></th><th className="px-3 py-2">会员</th><th className="px-3 py-2">分层</th><th className="px-3 py-2">48 小时窗口</th><th className="px-3 py-2">企业微信</th><th className="px-3 py-2">推广长图</th><th className="px-3 py-2">企微邀请码</th></tr></thead>
                 <tbody>
                   {(wecom?.rows || []).map((r) => (
                     <tr key={r.memberId} className="border-t border-stone-100">
@@ -319,12 +336,20 @@ export default function PushPeoplePage() {
                       <td className="px-3 py-2">{r.window.open ? <span className="text-teal-700">{r.window.label}</span> : <span className="text-stone-500">{r.window.label}</span>}</td>
                       <td className="px-3 py-2">{wecomCell(r.memberId)}</td>
                       <td className="px-3 py-2">{posterCell(r.memberId, r.name)}</td>
+                      <td className="px-3 py-2" data-testid={`wecom-member-qr-${r.memberId}`}>{r.inviteQr ? (
+                        <span className="flex gap-1">
+                          <a href={`/api/cn/ops/wecom/qr?memberId=${r.memberId}&inline=1`} target="_blank" rel="noreferrer" className="rounded border border-stone-300 px-2 py-0.5 text-xs font-bold">查看</a>
+                          <a href={`/api/cn/ops/wecom/qr?memberId=${r.memberId}`} className="rounded border border-teal-600 px-2 py-0.5 text-xs font-bold text-teal-800">下载</a>
+                        </span>
+                      ) : (
+                        <button type="button" onClick={() => memberQr(r.memberId)} disabled={Boolean(wecomBusy)} className="rounded border border-teal-600 px-2 py-0.5 text-xs font-bold text-teal-800 disabled:opacity-50">{wecomBusy === `qr${r.memberId}` ? '生成中…' : '生成邀请码'}</button>
+                      )}</td>
                     </tr>
                   ))}
-                  {wecom && !wecom.rows.length ? <tr><td colSpan={6} className="px-3 py-4 text-stone-500">暂无已绑定服务号的会员</td></tr> : null}
+                  {wecom && !wecom.rows.length ? <tr><td colSpan={7} className="px-3 py-4 text-stone-500">暂无已绑定服务号的会员</td></tr> : null}
                 </tbody>
               </table>
-              <p className="mt-2 text-xs text-stone-500">勾选后点「邀请加企业微信」：48 小时内与服务号互动过的会员会收到文字＋专属二维码（扫码添加后自动对应会员）；其余标记「无法触达（超过48小时）」，可复制邀请内容或下载二维码手动转发。</p>
+              <p className="mt-2 text-xs text-stone-500">勾选后点「邀请加企业微信」：48 小时内与服务号互动过的会员会收到文字＋专属二维码（扫码添加后自动对应会员）；其余标记「无法触达（超过48小时）」，可复制邀请内容或下载二维码手动转发。「企微邀请码」栏只生成该会员专属码、不发送：下载后发给会员本人，本人扫码加企微即自动对应会员（只对应，不改推荐人）。</p>
             </div>
           </div>
           {inviteResults ? (

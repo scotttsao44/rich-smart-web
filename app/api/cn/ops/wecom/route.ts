@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getFreshSessionUser, hasPlatformAdminAccess } from '@/lib/auth';
 import { listPushPeople } from '@/lib/local-cn-store-owners';
 import { listMemberTiersForPush } from '@/lib/local-cn-referral-engagement';
-import { ensureDefaultContactWay, inviteMembersToWecom, syncWecomCustomers, wecomOverview } from '@/lib/local-cn-wecom';
+import { ensureDefaultContactWay, ensureMemberInviteQr, inviteMembersToWecom, syncWecomCustomers, wecomOverview } from '@/lib/local-cn-wecom';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,7 +13,7 @@ function people() {
   return Array.from(rows.values());
 }
 
-// 后台「企业微信客户联系」：GET 概览；POST { action: 'invite', memberIds } | { action: 'sync' } | { action: 'default-qr' }
+// 后台「企业微信客户联系」：GET 概览；POST { action: 'invite', memberIds } | { action: 'sync' } | { action: 'default-qr' } | { action: 'member-qr', memberId }（只生成会员专属企微邀请码，不发送）
 export async function GET(request: NextRequest) {
   const user = await getFreshSessionUser(request);
   if (!hasPlatformAdminAccess(user)) return NextResponse.json({ error: '需要平台管理员权限' }, { status: user ? 403 : 401 });
@@ -38,6 +38,10 @@ export async function POST(request: NextRequest) {
     if (body.action === 'default-qr') {
       await ensureDefaultContactWay();
       return NextResponse.json({ overview: wecomOverview(people()) });
+    }
+    if (body.action === 'member-qr') {
+      const way = await ensureMemberInviteQr(Number(body.memberId));
+      return NextResponse.json({ memberId: Number(body.memberId), qrCode: way.qrCode, overview: wecomOverview(people()) });
     }
     return NextResponse.json({ error: '未知操作' }, { status: 400 });
   } catch (error) {
