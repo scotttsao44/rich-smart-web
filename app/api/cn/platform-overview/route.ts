@@ -17,17 +17,26 @@ async function platformUser(request: NextRequest) {
 }
 
 function safeMembers() {
-  return listLocalCnUsers().filter((user) => ![CAOMI_TEST_ACCOUNT_USER_ID, CAOMI_ADMIN_TEST_ACCOUNT_USER_ID, CAOMI_SCOOT_ADMIN_USER_ID].includes(user.id)).map((user) => ({
-    id: user.id,
-    name: user.name,
-    phone: user.phone,
-    email: user.email,
-    referralCode: user.referralCode,
-    referrerCode: user.referrerCode,
-    wechatBound: Boolean(user.wechatMiniOpenId || user.wechatId),
-    platformAdmin: user.platformAdmin === true,
-    createdAt: user.createdAt,
-  }));
+  const hidden = new Set([CAOMI_TEST_ACCOUNT_USER_ID, CAOMI_ADMIN_TEST_ACCOUNT_USER_ID, CAOMI_SCOOT_ADMIN_USER_ID]);
+  const all = listLocalCnUsers();
+  const byId = new Map(all.map((user) => [user.id, user]));
+  return all.filter((user) => !hidden.has(user.id)).map((user) => {
+    const referrer = user.referredByMemberId ? byId.get(Number(user.referredByMemberId)) : null;
+    return {
+      id: user.id,
+      name: user.name,
+      phone: user.phone,
+      email: user.email,
+      referralCode: user.referralCode,
+      referrerCode: user.referrerCode,
+      referredByMemberId: user.referredByMemberId || null,
+      referralSource: user.referralSource || null,
+      referrerName: referrer?.name || null,
+      wechatBound: Boolean(user.wechatMiniOpenId || user.wechatId),
+      platformAdmin: user.platformAdmin === true,
+      createdAt: user.createdAt,
+    };
+  });
 }
 
 function number(value: unknown) {

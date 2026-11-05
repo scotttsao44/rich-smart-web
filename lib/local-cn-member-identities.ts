@@ -1,7 +1,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import path from 'path';
 import { normalizeStoredVerifiedPhone } from '@/lib/international-phone';
-import { withLocalCnUsersWriteLock, type LocalCnUser } from '@/lib/local-cn-users';
+import { referrerEligibleForNewAttribution, withLocalCnUsersWriteLock, type LocalCnUser } from '@/lib/local-cn-users';
 
 const CAOMI_OFFICIAL_REFERRAL_CODE = 'RS-CN-OFFICIAL';
 
@@ -137,7 +137,9 @@ function createUser(users: LocalCnUser[], input: ResolveWechatIdentityInput, now
   const rawReferrerCode = String(input.referrerCode || '').trim().toUpperCase();
   const explicitReferrerCode = rawReferrerCode && normalizeCnReferrerCode(rawReferrerCode) !== CAOMI_OFFICIAL_REFERRAL_CODE ? normalizeCnReferrerCode(rawReferrerCode) : '';
   if (explicitReferrerCode && !isKnownLocalCnReferrerCode(explicitReferrerCode, users)) throw new Error('找不到该推荐码，请向推荐人确认');
-  const referrer = explicitReferrerCode ? users.find((user) => user.referralCode.toUpperCase() === explicitReferrerCode) || null : null;
+  const referrerFound = explicitReferrerCode ? users.find((user) => user.referralCode.toUpperCase() === explicitReferrerCode) || null : null;
+  // 码主人停用／不合格：不绑定该人，也不改成官方直属。维持归属待确认，由管理员手动分配。
+  const referrer = referrerEligibleForNewAttribution(referrerFound);
   const pendingAttribution = !referrer;
   const id = nextMemberId(users, `${input.appId}:${input.openId}`);
   const user: LocalCnUser = {

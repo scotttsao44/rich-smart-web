@@ -225,7 +225,8 @@ export function resolveReferralAttributionFromCode(rawCode?: string | null, sour
   const cleaned = String(rawCode || '').trim();
   let owner = cleaned ? findLocalCnUserByReferralCode(cleaned) : null;
   if (owner && !referralOwnerForAttribution(owner.id)) owner = null;
-  // 没有有效推荐码：不默认归 Scoot/官方直属，回传 null → 新会员为「归属待确认」，由 AI 客服询问来源并交后台核对
+  // 没有有效推荐码，或码主人已停用／不合格：不默认归 Scoot／官方直属（RS-CN-OFFICIAL）。
+  // 回传 null → 新会员维持「归属待确认」(pending_attribution)，由管理员手动分配。不要在这里改成官方直属。
   if (!owner) return null;
   const ensured = ensureLocalCnReferralLink(owner.id);
   if (!ensured) return null;
