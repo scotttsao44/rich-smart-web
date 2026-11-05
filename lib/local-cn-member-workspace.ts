@@ -1,7 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import path from 'path';
 import type { SessionUser } from './auth';
+import { isKefuAdminEligible } from './auth';
 import { findLocalCnUserById, getFrozenReferrerCode, getFrozenReferrerMemberId, listLocalCnUsers, localCnPromotionQualification } from './local-cn-users';
+import { ownerEligibility } from './local-cn-store-owners';
+import { findLatestProfile } from './local-cn-experience-points';
 import { commerceSnapshot, getWallet, listLocalCnOrders } from './local-cn-commerce';
 import { getReferralEngagement } from './local-cn-referral-engagement';
 import { ensureLocalCnReferralLink, referralDisplayName } from './local-cn-referral-attribution';
@@ -20,6 +23,31 @@ type MemberWorkspace = {
   isDemoData: boolean;
 };
 
+
+function resolveMemberRoleLabel(input: {
+  platformAdmin?: boolean;
+  kefuAdminEligible?: boolean;
+  storeOwner?: boolean;
+  agent?: boolean;
+}) {
+  if (input.platformAdmin || input.kefuAdminEligible) return '平台主管';
+  if (input.agent) return '代理';
+  if (input.storeOwner) return '店主';
+  return '会员';
+}
+
+function memberIdentityFlags(user: SessionUser, localUser: ReturnType<typeof findLocalCnUserById>) {
+  const kefuAdminEligible = isKefuAdminEligible(localUser?.wechatOfficialOpenId);
+  const platformAdmin = user.platformAdmin === true || localUser?.platformAdmin === true;
+  const storeOwner = Boolean(localUser && ownerEligibility(localUser.id).eligible);
+  const agentProfile = localUser
+    ? findLatestProfile({ memberId: localUser.id, openid: localUser.wechatOfficialOpenId, kind: 'agent' })
+    : null;
+  const agent = Boolean(agentProfile && (agentProfile.status === 'approved' || agentProfile.status === 'submitted'));
+  const role = resolveMemberRoleLabel({ platformAdmin, kefuAdminEligible, storeOwner, agent });
+  return { role, platformAdmin, kefuAdminEligible, opsEligible: platformAdmin || kefuAdminEligible, storeOwner, agent };
+}
+
 function file(userId: number) {
   const dir = process.env.LOCAL_CN_DATA_DIR || path.join(process.cwd(), '.data');
   return path.join(dir, `workspace-member-${userId}.json`);
@@ -27,7 +55,7 @@ function file(userId: number) {
 
 function seededData(user: SessionUser): MemberWorkspace {
   return {
-    profile: { id: user.id, name: user.name, email: user.email, role: '会员', store: '尚未指定', wechatBound: false, platformAdmin: user.platformAdmin === true, memberSince: new Date().toISOString().slice(0, 10) },
+    profile: (() => { const flags = memberIdentityFlags(user, findLocalCnUserById(user.id)); return { id: user.id, name: user.name, email: user.email, role: flags.role, store: '尚未指定', wechatBound: false, platformAdmin: flags.platformAdmin, kefuAdminEligible: flags.kefuAdminEligible, opsEligible: flags.opsEligible, memberSince: new Date().toISOString().slice(0, 10) }; })(),
     metrics: [],
     referralCode: user.referralCode || `RS-CN-${Math.abs(user.id)}`,
     referrals: [],
@@ -233,7 +261,7 @@ export function getMemberWorkspace(user: SessionUser) {
   }));
   return {
     ...data,
-    profile: { ...data.profile, role: '会员', name: localUser?.name || user.name, email: localUser?.email || user.email, store: localUser?.store || data.profile.store, wechatBound: Boolean(localUser?.wechatId || localUser?.wechatMiniOpenId || localUser?.wechatOfficialOpenId || localUser?.wechatOpenPlatformOpenId || localUser?.wechatUnionId || data.profile.wechatBound), platformAdmin: user.platformAdmin === true, referralSharingEnabled, promotionQualification },
+    profile: (() => { const flags = memberIdentityFlags(user, localUser); return { ...data.profile, role: flags.role, name: localUser?.name || user.name, email: localUser?.email || user.email, store: localUser?.store || data.profile.store, wechatBound: Boolean(localUser?.wechatId || localUser?.wechatMiniOpenId || localUser?.wechatOfficialOpenId || localUser?.wechatOpenPlatformOpenId || localUser?.wechatUnionId || data.profile.wechatBound), platformAdmin: flags.platformAdmin, kefuAdminEligible: flags.kefuAdminEligible, opsEligible: flags.opsEligible, referralSharingEnabled, promotionQualification }; })(),
     referralCode: referralSharingEnabled ? referralCode : '',
     referralPath: referralLink?.path || '',
     referralRelation: directReferrerId ? {

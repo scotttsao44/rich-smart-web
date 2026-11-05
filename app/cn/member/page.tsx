@@ -448,11 +448,18 @@ export default function ChinaMemberDashboardPage() {
               <ShoppingBag className="h-4 w-4" />
               商城
             </Link>
-            {user.platformAdmin ? (
-              <Link href="/cn/ops" className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg bg-stone-950 px-4 py-2 text-sm font-bold text-white">
-                <ShieldCheck className="h-4 w-4" />
-                平台后台
-              </Link>
+            {user.platformAdmin || workspace.profile?.opsEligible || workspace.profile?.kefuAdminEligible ? (
+              user.platformAdmin ? (
+                <Link href="/cn/ops" className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg bg-stone-950 px-4 py-2 text-sm font-bold text-white">
+                  <ShieldCheck className="h-4 w-4" />
+                  平台后台
+                </Link>
+              ) : (
+                <a href="/api/auth/wechat/kefu-admin?next=%2Fcn%2Fops" className="col-span-2 inline-flex items-center justify-center gap-2 rounded-lg bg-stone-950 px-4 py-2 text-sm font-bold text-white">
+                  <ShieldCheck className="h-4 w-4" />
+                  平台后台（微信验证）
+                </a>
+              )
             ) : null}
           </div>
         </header>

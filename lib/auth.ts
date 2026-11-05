@@ -29,6 +29,12 @@ export function kefuAdminOpenids() {
   return String(process.env.KEFU_NOTIFY_OPENIDS || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+/** 服务号 openid 是否在 KEFU_NOTIFY_OPENIDS：可走微信验证进 /cn/ops，不改会员 platformAdmin 字段 */
+export function isKefuAdminEligible(openid: string | null | undefined) {
+  const id = String(openid || '').trim();
+  return Boolean(id && kefuAdminOpenids().includes(id));
+}
+
 function authSecret() {
   return process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET || 'dev-only-change-before-production';
 }
