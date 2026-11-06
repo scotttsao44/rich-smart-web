@@ -163,6 +163,7 @@ export default function BrandEntityChangePage() {
                 <div>
                   <label className="text-sm font-black">统一社会信用代码 <span className="text-red-600">*</span></label>
                   <input className={input} value={form.registrationNo} onChange={(e) => setForm({ ...form, registrationNo: e.target.value.toUpperCase() })} placeholder="18 位代码" maxLength={20} />
+                  <p className="mt-1 text-xs text-stone-500">按执照原样填写。字母 L 是合法字符，不要改成数字 1。格式通过后仍须平台对照原件审核，通过前不变更品牌资料。</p>
                 </div>
                 <div>
                   <label className="text-sm font-black">联系人 <span className="text-red-600">*</span></label>

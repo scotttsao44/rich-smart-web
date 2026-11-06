@@ -118,6 +118,7 @@ export default function BrandClaimAdminPanel({ brands, onChanged }: { brands: Br
 
       <section className="mt-6 rounded-lg border bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between"><h2 className="text-xl font-black">公司主体变更申请</h2><span className="text-sm text-slate-500">待审 {changes.filter((row) => row.status === 'pending').length}</span></div>
+        <p className="mt-1 text-sm font-bold text-slate-500">进入此列表的代码已通过 GB 32100 格式与校验位检核（字母 L 合法，勿要求改成数字）。这不证明执照真实。请对照上传原件核对 18 位代码与名称，核准后才会写入品牌资料。</p>
         {!changes.length ? <p className="mt-2 text-sm font-bold text-slate-400">暂无申请</p> : null}
         <div className="mt-3 grid gap-3">
           {changes.map((row) => (

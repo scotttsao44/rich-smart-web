@@ -8,7 +8,7 @@ import { findLocalCnUserById } from './local-cn-users';
 import { listLocalCnMemberIdentities } from './local-cn-member-identities';
 import { revokeBrandPilotAccessForMember } from './local-cn-brand-demo-access';
 import { readBrandDocumentOwnership, brandDocumentDirectory } from './brand-document-ownership.server';
-import { isUnifiedSocialCreditCode, normalizeUsccCandidate } from './cn-business-license-ocr';
+import { submittedUnifiedSocialCreditCode } from './cn-business-license-ocr';
 
 // 品牌认领链接 + 公司主体变更申请（本地 JSON 模式）
 // - 认领链接：随机 token（只存 sha256），一次性、7 天有效、可撤销、全部写审计
@@ -314,13 +314,14 @@ export function submitEntityChange(user: SessionUser | null | undefined, input: 
   const brand = ownedApprovedBrand(user.id);
   if (!brand) throw new Error('当前账号没有已开通的品牌，无法变更公司主体');
   const companyName = text(input.companyName, 100);
-  const registrationNo = normalizeUsccCandidate(text(input.registrationNo, 40));
+  const registrationNo = submittedUnifiedSocialCreditCode(text(input.registrationNo, 40));
   const licenseToken = text(input.licenseToken, 220);
   const licenseName = text(input.licenseName, 160) || '营业执照';
   const contactName = text(input.contactName, 40);
   const phone = text(input.phone, 20).replace(/[\s-]/g, '');
   if (companyName.length < 4) throw new Error('请填写完整的公司名称（与营业执照一致）');
-  if (!isUnifiedSocialCreditCode(registrationNo)) throw new Error('统一社会信用代码格式不正确，请核对营业执照上的 18 位代码');
+  // 这里只做 GB 32100 格式与校验位检核。执照是否属实仍由平台对照原件人工审核，核准前不写品牌资料。
+  if (!registrationNo) throw new Error('统一社会信用代码格式不正确，请核对营业执照上的 18 位代码');
   if (!contactName) throw new Error('请填写联系人');
   if (!/^1[3-9]\d{9}$/.test(phone)) throw new Error('请填写正确的 11 位手机号');
   if (!licenseToken) throw new Error('请上传营业执照');
@@ -352,7 +353,7 @@ export function submitEntityChange(user: SessionUser | null | undefined, input: 
       previous: null,
     };
     state.entityChanges.unshift(row);
-    addAudit(state, { action: 'entity_change.submitted', actorId: user.id, brandId: brand.id, refId: row.id, detail: '品牌方提交公司主体变更，待平台审核' });
+    addAudit(state, { action: 'entity_change.submitted', actorId: user.id, brandId: brand.id, refId: row.id, detail: '品牌方提交公司主体变更。统一社会信用代码已通过 GB 32100 格式与校验位检核；证件真实性待平台对照执照原件人工核对，核准前不修改品牌资料' });
     return publicChange(row);
   });
 }
