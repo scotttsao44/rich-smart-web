@@ -11,6 +11,7 @@
     "start:next": "next start",
     "check:customer-copy": "node scripts/check-miniprogram-customer-copy.mjs",
     "test:cn-routing": "node scripts/test-cn-routing-regression.mjs",
+    "test:uscc-format": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-uscc-entity-change-format.mts",
     "lint": "next lint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

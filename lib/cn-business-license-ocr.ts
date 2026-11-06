@@ -109,22 +109,17 @@ function cleanRegisteredCapital(value: string) {
   return cleaned;
 }
 
+// GB 32100-2015 字符集共 31 个：数字与大写字母，不含 I、O、S、V、Z。L 的代码值是 20，是合法字符。
 const usccChars = '0123456789ABCDEFGHJKLMNPQRTUWXY';
 const usccWeights = [1, 3, 9, 27, 19, 26, 16, 17, 20, 29, 25, 13, 8, 24, 10, 30, 28];
+const usccPattern = /^[159Y][1239][0-9]{6}[0-9A-HJ-NPQRTUWXY]{10}$/;
 
-export function normalizeUsccCandidate(value: string) {
-  const raw = value.trim().toUpperCase().replace(/[^0-9A-Z]/g, '');
-  if (raw.length !== 18) return raw;
-  return raw
-    .replace(/[IL]/g, '1')
-    .replace(/O/g, '0')
-    .replace(/S/g, '5')
-    .replace(/Z/g, '2');
+export function canonicalUscc(value: string) {
+  return value.trim().toUpperCase().replace(/[^0-9A-Z]/g, '');
 }
 
-export function isUnifiedSocialCreditCode(value: string) {
-  const code = normalizeUsccCandidate(value);
-  if (!/^[159Y][1239][0-9]{6}[0-9A-HJ-NPQRTUWXY]{10}$/.test(code)) return false;
+function usccChecksumMatches(code: string) {
+  if (!usccPattern.test(code)) return false;
   let sum = 0;
   for (let index = 0; index < 17; index += 1) {
     const charIndex = usccChars.indexOf(code[index]);
@@ -133,6 +128,29 @@ export function isUnifiedSocialCreditCode(value: string) {
   }
   const checkIndex = (31 - (sum % 31)) % 31;
   return usccChars[checkIndex] === code[17];
+}
+
+// 格式检核：字符集 + MOD 31 校验位。不改写任何字母，也不判断证件真伪。
+export function isUnifiedSocialCreditCode(value: string) {
+  const code = canonicalUscc(value);
+  return code.length === 18 && usccChecksumMatches(code);
+}
+
+// 用户提交的代码只做大小写与分隔符整理。校验失败则拒绝，不换成另一个码。
+export function submittedUnifiedSocialCreditCode(value: string) {
+  const code = canonicalUscc(value);
+  return isUnifiedSocialCreditCode(code) ? code : null;
+}
+
+// 仅用于 OCR 草稿。字符集之外的 I/O/S/Z 只有在替换后能通过校验位时才采用。
+// L 属于字符集，一律保留；不得把 L 改成 1。替换后仍不通过时保留原字符串，不编造代码。
+export function normalizeUsccCandidate(value: string) {
+  const raw = canonicalUscc(value);
+  if (raw.length !== 18) return raw;
+  if (usccChecksumMatches(raw)) return raw;
+  const repaired = raw.replace(/I/g, '1').replace(/O/g, '0').replace(/S/g, '5').replace(/Z/g, '2');
+  if (repaired !== raw && usccChecksumMatches(repaired)) return repaired;
+  return raw;
 }
 
 function normalizedLines(source: string) {
