@@ -11,6 +11,7 @@
     "start:next": "next start",
     "check:customer-copy": "node scripts/check-miniprogram-customer-copy.mjs",
     "test:cn-routing": "node scripts/test-cn-routing-regression.mjs",
+    "test:product-cover": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-product-cover-upload.mts",
     "lint": "next lint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
