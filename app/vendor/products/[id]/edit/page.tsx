@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { ArrowLeft, Brain, CheckCircle2, Sparkles, UploadCloud } from 'lucide-react';
 import { emptyProductForm, isSharedDeviceListing, productToFormValues, type ProductFormValues, validateProductForm } from '@/lib/vendor-product-form-feedback';
+import { brandAssetUrlFromUploadResponse } from '@/lib/brand-asset-public-url';
 
 type EditableProduct = Record<string, any> & {
   id: number;
@@ -82,20 +83,30 @@ export default function EditVendorProductPage() {
     }
   };
 
+  const showCoverError = (message: string) => {
+    setError(message);
+    setFieldErrors((current) => ({ ...current, imageUrl: message }));
+  };
+
   const uploadProductImage = async (file?: File) => {
-    if (!file) return;
+    if (!file) {
+      showCoverError('没有读到图片文件，请再点一次「换图」选择图片');
+      return;
+    }
     setUploadingImage(true);
     setError('');
+    setFieldErrors((current) => ({ ...current, imageUrl: undefined }));
     try {
       const body = new FormData();
       body.set('file', file);
       body.set('purpose', 'product');
       const res = await fetch('/api/cn/brand-assets', { method: 'POST', body });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || '商品图片上传失败');
-      setField('imageUrl', data.asset.url);
+      const url = brandAssetUrlFromUploadResponse(data);
+      if (!res.ok || !url) throw new Error(data.error || '商品图片上传失败');
+      setField('imageUrl', url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '商品图片上传失败');
+      showCoverError(err instanceof Error ? err.message : '商品图片上传失败');
     } finally {
       setUploadingImage(false);
     }
@@ -268,9 +279,10 @@ export default function EditVendorProductPage() {
                 <label className="label">商品主图路径或图片网址</label>
                 <div className="flex gap-2">
                   <input className="input-field flex-1" value={form.imageUrl} onChange={(e) => setField('imageUrl', e.target.value)} />
-                  <label className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-teal-700 bg-teal-50 px-3 py-2 text-xs font-black text-teal-800 hover:bg-teal-100">
-                    <UploadCloud className="h-4 w-4" />{uploadingImage ? '上传中...' : '换图'}
-                    <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={uploadingImage} onChange={(e) => { void uploadProductImage(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} />
+                  <label className="relative inline-flex shrink-0 cursor-pointer items-center gap-1.5 overflow-hidden rounded-lg border border-teal-700 bg-teal-50 px-3 py-2 text-xs font-black text-teal-800 hover:bg-teal-100">
+                    <UploadCloud className="pointer-events-none h-4 w-4" />
+                    <span className="pointer-events-none">{uploadingImage ? '上传中...' : '换图'}</span>
+                    <input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploadingImage} className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed" onChange={(e) => { const input = e.currentTarget; const file = input.files?.[0]; window.setTimeout(() => { input.value = ''; }, 0); void uploadProductImage(file); }} />
                   </label>
                 </div>
                 {fieldErrors.imageUrl ? <p className="mt-1 text-xs font-bold text-red-600">{fieldErrors.imageUrl}</p> : null}

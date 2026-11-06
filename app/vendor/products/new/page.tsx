@@ -14,6 +14,7 @@ import {
   type ProductFormValues,
   validateProductForm,
 } from '@/lib/vendor-product-form-feedback';
+import { brandAssetUrlFromUploadResponse } from '@/lib/brand-asset-public-url';
 
 const PRODUCT_DRAFT_STORAGE_KEY = 'richsmart_cn_vendor_new_product_draft';
 
@@ -178,8 +179,9 @@ export default function NewVendorProductPage() {
     body.set('purpose', 'product');
     const res = await fetch('/api/cn/brand-assets', { method: 'POST', body });
     const data = await readJson(res);
-    if (!res.ok || !data?.asset?.url) throw new Error(readApiError(data, `图片「${file.name}」上传失败`));
-    return String(data.asset.url);
+    const url = brandAssetUrlFromUploadResponse(data);
+    if (!res.ok || !url) throw new Error(readApiError(data, `图片「${file.name}」上传失败`));
+    return url;
   };
 
   const saveDraft = () => {
@@ -307,30 +309,53 @@ export default function NewVendorProductPage() {
     }
   };
 
+  const showCoverError = (message: string) => {
+    setError(message);
+    setFieldErrors((current) => ({ ...current, imageUrl: message }));
+  };
+
   const uploadCoverInDialog = async (file?: File) => {
-    if (!file) return;
+    if (!file) {
+      showCoverError('没有读到图片文件，请再点一次「上传」选择图片');
+      return;
+    }
     setDialogUploading(true);
     try {
       const url = await uploadImage(file);
       setMissingDraft((current) => ({ ...current, imageUrl: url }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '封面上传失败');
+      showCoverError(err instanceof Error ? err.message : '封面上传失败');
     } finally {
       setDialogUploading(false);
     }
   };
 
   const uploadCoverInForm = async (file?: File) => {
-    if (!file) return;
+    if (!file) {
+      showCoverError('没有读到图片文件，请再点一次「上传」选择图片');
+      return;
+    }
     setUploadingImage(true);
     setError('');
+    setFieldErrors((current) => {
+      const next = { ...current };
+      delete next.imageUrl;
+      return next;
+    });
     try {
       setField('imageUrl', await uploadImage(file));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '商品图片上传失败');
+      showCoverError(err instanceof Error ? err.message : '商品图片上传失败');
     } finally {
       setUploadingImage(false);
     }
+  };
+
+  const onCoverFile = (event: React.ChangeEvent<HTMLInputElement>, upload: (file?: File) => Promise<void>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    window.setTimeout(() => { input.value = ''; }, 0);
+    void upload(file);
   };
 
   const focusFirstFieldError = (nextErrors: Partial<Record<FieldKey, string>>) => {
@@ -512,9 +537,9 @@ export default function NewVendorProductPage() {
                   <div className="flex items-center gap-2">
                     {!isPlaceholderImage(form.imageUrl) ? <img src={form.imageUrl} alt="封面" className="h-12 w-12 shrink-0 rounded-lg border border-stone-200 object-cover" /> : null}
                     <input ref={setFieldRef('imageUrl') as React.Ref<HTMLInputElement>} className={inputClass('imageUrl', 'flex-1')} value={form.imageUrl} onChange={(e) => setField('imageUrl', e.target.value)} placeholder="上传或粘贴图片网址" />
-                    <label className="inline-flex shrink-0 cursor-pointer items-center rounded-lg border border-teal-700 px-3 py-2 text-xs font-black text-teal-800">
-                      {uploadingImage ? '上传中…' : '上传'}
-                      <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={uploadingImage} onChange={(e) => { void uploadCoverInForm(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} />
+                    <label className="relative inline-flex shrink-0 cursor-pointer items-center overflow-hidden rounded-lg border border-teal-700 px-3 py-2 text-xs font-black text-teal-800">
+                      <span className="pointer-events-none">{uploadingImage ? '上传中…' : '上传'}</span>
+                      <input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploadingImage} className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed" onChange={(e) => onCoverFile(e, uploadCoverInForm)} />
                     </label>
                   </div>
                   {fieldError('imageUrl')}
@@ -582,10 +607,12 @@ export default function NewVendorProductPage() {
                   {item.key === 'imageUrl' ? (
                     <div className="mt-1 flex items-center gap-2">
                       {missingDraft.imageUrl ? <img src={missingDraft.imageUrl} alt="封面" className="h-12 w-12 rounded-lg border object-cover" /> : null}
-                      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-teal-700 px-3 py-2 text-sm font-black text-teal-800">
-                        <ImagePlus className="h-4 w-4" />{dialogUploading ? '上传中…' : missingDraft.imageUrl ? '换一张' : '上传封面'}
-                        <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={dialogUploading} onChange={(e) => { void uploadCoverInDialog(e.currentTarget.files?.[0]); e.currentTarget.value = ''; }} />
+                      <label className="relative inline-flex cursor-pointer items-center gap-1.5 overflow-hidden rounded-lg border border-teal-700 px-3 py-2 text-sm font-black text-teal-800">
+                        <ImagePlus className="pointer-events-none h-4 w-4" />
+                        <span className="pointer-events-none">{dialogUploading ? '上传中…' : missingDraft.imageUrl ? '换一张' : '上传封面'}</span>
+                        <input type="file" accept="image/jpeg,image/png,image/webp" disabled={dialogUploading} className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed" onChange={(e) => onCoverFile(e, uploadCoverInDialog)} />
                       </label>
+                      {error ? <p className="text-xs font-bold text-red-600">{error}</p> : null}
                     </div>
                   ) : item.key === 'description' ? (
                     <textarea rows={3} className="input-field mt-1" value={missingDraft[item.key] || ''} onChange={(e) => setMissingDraft((cur) => ({ ...cur, [item.key]: e.target.value }))} />
